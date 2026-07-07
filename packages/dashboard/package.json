@@ -1,0 +1,9 @@
+{
+  "name": "@llmpeek/dashboard",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "echo \"dashboard (Svelte + Vite) wired up in Phase 6\""
+  }
+}

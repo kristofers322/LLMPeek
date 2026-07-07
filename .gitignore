@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# LLMPeek local capture output — never commit; may contain prompts / user data
+.llmpeek/
+*.ndjson
+
+.DS_Store
+.env
