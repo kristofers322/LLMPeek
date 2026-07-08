@@ -6,6 +6,8 @@ const views = $state<Record<string, RequestView>>({});
 const order = $state<string[]>([]);
 let selectedId = $state<string | null>(null);
 let connected = $state(false);
+// biome-ignore lint/style/useConst: reassigned from Svelte event handlers in markup.
+let activeTab = $state<"overview" | "logs">("overview");
 
 function connect(): void {
   const ws = new WebSocket(`ws://${location.host}/stream`);
@@ -37,128 +39,335 @@ connect();
 
 const rows = $derived([...order].reverse().map((id) => views[id]));
 const selected = $derived(selectedId ? views[selectedId] : undefined);
+const completedRows = $derived(rows.filter((r) => r.status === "completed"));
+const activeRows = $derived(rows.filter((r) => r.status === "pending" || r.status === "streaming"));
+const errorRows = $derived(rows.filter((r) => r.status === "error"));
+const averageLatency = $derived.by(() => {
+  const values = rows.map((r) => r.totalMs).filter((n): n is number => n !== undefined);
+  if (!values.length) return undefined;
+  return Math.round(values.reduce((sum, n) => sum + n, 0) / values.length);
+});
+const totalCost = $derived(rows.reduce((sum, r) => sum + (r.cost?.totalCost ?? 0), 0));
+const latestRows = $derived(rows.slice(0, 6));
 
 const tokens = (v: RequestView): string =>
-  v.usage ? `${v.usage.promptTokens ?? "?"} / ${v.usage.completionTokens ?? "?"}` : "—";
-const ms = (n?: number): string => (n === undefined ? "—" : `${n} ms`);
+  v.usage ? `${v.usage.promptTokens ?? "?"} / ${v.usage.completionTokens ?? "?"}` : "-";
+const ms = (n?: number): string => (n === undefined ? "-" : `${n} ms`);
+const money = (n: number): string => (n > 0 ? `$${n.toFixed(5)}` : "-");
 
 function partText(p: ContentPart): string {
   if (p.type === "text") return p.text ?? "";
-  if (p.type === "tool_use") return `🛠 ${p.name}(${p.argumentsRaw ?? ""})`;
-  if (p.type === "tool_result") return `↩ tool_result ${p.toolCallId}`;
-  if (p.type === "refusal") return `⛔ ${p.refusal}`;
+  if (p.type === "tool_use") return `tool ${p.name}(${p.argumentsRaw ?? ""})`;
+  if (p.type === "tool_result") return `tool_result ${p.toolCallId}`;
+  if (p.type === "refusal") return `refusal ${p.refusal}`;
   if (p.type === "image" || p.type === "audio" || p.type === "file") return `[${p.type}]`;
   return `[${p.type}]`;
 }
 const msgText = (m: NormalizedMessage): string => (m.content ?? []).map(partText).join("\n");
+
+function badgeClass(status: RequestView["status"]): string {
+  if (status === "completed") return "border-success/30 bg-success/10 text-success";
+  if (status === "streaming") return "border-primary/35 bg-primary/10 text-primary";
+  if (status === "error") return "border-destructive/35 bg-destructive/10 text-destructive";
+  return "border-warning/35 bg-warning/10 text-warning";
+}
+
+function rowClass(requestId: string): string {
+  return requestId === selectedId
+    ? "border-primary/35 bg-primary/10"
+    : "border-transparent hover:border-border hover:bg-accent/45";
+}
+
+function statusDotClass(status: RequestView["status"]): string {
+  if (status === "completed") return "border-success/40 bg-success";
+  if (status === "streaming") return "border-primary/40 bg-primary";
+  if (status === "error") return "border-destructive/40 bg-destructive";
+  return "border-warning/40 bg-warning";
+}
+
+function tabClass(tab: "overview" | "logs"): string {
+  return activeTab === tab
+    ? "bg-background text-foreground shadow-sm"
+    : "text-muted-foreground hover:text-foreground";
+}
 </script>
 
-<div class="app">
-  <header>
-    <span class="logo">LLM<b>Peek</b></span>
-    <span class="dot" class:on={connected}></span>
-    <span class="conn">{connected ? "live" : "reconnecting…"}</span>
-    <span class="count">{order.length} request{order.length === 1 ? "" : "s"}</span>
+<div class="flex h-screen flex-col bg-background text-foreground">
+  <header class="flex h-14 shrink-0 items-center gap-4 border-b bg-card px-5">
+    <div class="flex items-baseline gap-1">
+      <span class="text-[15px] font-semibold tracking-normal">LLM</span>
+      <span class="text-[15px] font-semibold tracking-normal text-primary">Peek</span>
+    </div>
+
+    <div class="flex items-center gap-2 text-xs text-muted-foreground">
+      <span
+        class={`h-2 w-2 rounded-full ${connected ? "bg-success shadow-[0_0_0_3px_hsl(var(--success)/0.12)]" : "bg-muted-foreground"}`}
+      ></span>
+      <span>{connected ? "live" : "reconnecting..."}</span>
+    </div>
+
+    <nav class="ml-3 rounded-md bg-muted p-1" aria-label="Dashboard views">
+      <button
+        class={`h-8 rounded-sm px-3 text-sm font-medium transition ${tabClass("overview")}`}
+        type="button"
+        onclick={() => (activeTab = "overview")}
+      >
+        Overview
+      </button>
+      <button
+        class={`h-8 rounded-sm px-3 text-sm font-medium transition ${tabClass("logs")}`}
+        type="button"
+        onclick={() => (activeTab = "logs")}
+      >
+        Logs
+      </button>
+    </nav>
+
+    <span class="ml-auto text-xs text-muted-foreground">
+      {order.length} request{order.length === 1 ? "" : "s"}
+    </span>
   </header>
 
-  <main>
-    <ul class="list">
-      {#each rows as r (r.requestId)}
-        <li class:selected={r.requestId === selectedId}>
-          <button type="button" onclick={() => (selectedId = r.requestId)}>
-            <span class="badge {r.status}">{r.status}</span>
-            <span class="model">{r.model ?? r.provider ?? "?"}</span>
-            <span class="meta">{tokens(r)} · {ms(r.totalMs ?? r.ttftMs)}</span>
-          </button>
-        </li>
-      {/each}
-      {#if rows.length === 0}
-        <li class="empty">Waiting for LLM calls…</li>
-      {/if}
-    </ul>
-
-    <section class="detail">
-      {#if selected}
-        <div class="head">
-          <b>{selected.provider}</b> · {selected.model ?? "?"} · {selected.operation ?? "?"}
-          <code>{selected.path}</code>
+  <main class="min-h-0 flex-1">
+    {#if activeTab === "overview"}
+      <section class="grid h-full grid-rows-[auto_1fr] gap-5 overflow-y-auto p-5">
+        <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          <div class="rounded-md border bg-card p-4">
+            <div class="text-xs font-medium text-muted-foreground">Requests</div>
+            <div class="mt-2 text-2xl font-semibold">{rows.length}</div>
+          </div>
+          <div class="rounded-md border bg-card p-4">
+            <div class="text-xs font-medium text-muted-foreground">Active</div>
+            <div class="mt-2 text-2xl font-semibold text-primary">{activeRows.length}</div>
+          </div>
+          <div class="rounded-md border bg-card p-4">
+            <div class="text-xs font-medium text-muted-foreground">Completed</div>
+            <div class="mt-2 text-2xl font-semibold text-success">{completedRows.length}</div>
+          </div>
+          <div class="rounded-md border bg-card p-4">
+            <div class="text-xs font-medium text-muted-foreground">Errors</div>
+            <div class="mt-2 text-2xl font-semibold text-destructive">{errorRows.length}</div>
+          </div>
+          <div class="rounded-md border bg-card p-4">
+            <div class="text-xs font-medium text-muted-foreground">Avg Latency</div>
+            <div class="mt-2 text-2xl font-semibold">{ms(averageLatency)}</div>
+          </div>
         </div>
-        <div class="stats">
-          <span class="badge {selected.status}">{selected.status}</span>
-          <span>tokens <b>{tokens(selected)}</b></span>
-          <span>ttft <b>{ms(selected.ttftMs)}</b></span>
-          <span>total <b>{ms(selected.totalMs)}</b></span>
-          {#if selected.finishReason}<span>finish <b>{selected.finishReason}</b></span>{/if}
-          {#if selected.cost?.totalCost != null}<span>cost <b>${selected.cost.totalCost.toFixed(5)}</b></span>{/if}
+
+        <div class="grid min-h-0 gap-5 xl:grid-cols-[1fr_320px]">
+          <section class="min-h-0 rounded-md border bg-card">
+            <div class="flex h-12 items-center justify-between border-b px-4">
+              <h2 class="text-sm font-semibold">Recent Activity</h2>
+              <button
+                class="h-8 rounded-md border px-3 text-xs font-medium text-muted-foreground transition hover:bg-accent hover:text-foreground"
+                type="button"
+                onclick={() => (activeTab = "logs")}
+              >
+                View logs
+              </button>
+            </div>
+
+            <div class="divide-y">
+              {#each latestRows as r (r.requestId)}
+                <button
+                  class="grid w-full grid-cols-[minmax(0,1fr)_auto] gap-3 px-4 py-3 text-left transition hover:bg-accent/40"
+                  type="button"
+                  onclick={() => {
+                    selectedId = r.requestId;
+                    activeTab = "logs";
+                  }}
+                >
+                  <span class="min-w-0">
+                    <span class="block truncate text-sm font-medium">
+                      {r.model ?? r.provider ?? "unknown model"}
+                    </span>
+                    <span class="mt-1 block truncate text-xs text-muted-foreground">
+                      {r.provider ?? "unknown"} / {r.operation ?? "request"} {r.path ?? ""}
+                    </span>
+                  </span>
+                  <span class="flex items-center gap-3">
+                    <span class="text-xs text-muted-foreground">{ms(r.totalMs ?? r.ttftMs)}</span>
+                    <span
+                      class={`rounded-full border px-2 py-0.5 text-[11px] font-medium uppercase tracking-normal ${badgeClass(r.status)}`}
+                    >
+                      {r.status}
+                    </span>
+                  </span>
+                </button>
+              {/each}
+
+              {#if latestRows.length === 0}
+                <div class="px-4 py-10 text-sm text-muted-foreground">Waiting for LLM calls...</div>
+              {/if}
+            </div>
+          </section>
+
+          <aside class="rounded-md border bg-card p-4">
+            <h2 class="text-sm font-semibold">Session</h2>
+            <dl class="mt-4 space-y-3 text-sm">
+              <div class="flex items-center justify-between gap-4">
+                <dt class="text-muted-foreground">Connection</dt>
+                <dd class="font-medium">{connected ? "Live" : "Reconnecting"}</dd>
+              </div>
+              <div class="flex items-center justify-between gap-4">
+                <dt class="text-muted-foreground">Total cost</dt>
+                <dd class="font-medium">{money(totalCost)}</dd>
+              </div>
+              <div class="flex items-center justify-between gap-4">
+                <dt class="text-muted-foreground">Streaming</dt>
+                <dd class="font-medium">{rows.filter((r) => r.streamed).length}</dd>
+              </div>
+              <div class="flex items-center justify-between gap-4">
+                <dt class="text-muted-foreground">Selected</dt>
+                <dd class="max-w-40 truncate font-mono text-xs">{selected?.requestId ?? "-"}</dd>
+              </div>
+            </dl>
+          </aside>
         </div>
-        {#if selected.errorMessage}<pre class="error">{selected.errorMessage}</pre>{/if}
+      </section>
+    {:else}
+      <section class="grid h-full min-h-0 grid-cols-[340px_1fr]">
+        <aside class="min-h-0 overflow-y-auto border-r bg-card/60">
+          <div class="sticky top-0 z-10 border-b bg-card/95 px-4 py-3 backdrop-blur">
+            <h2 class="text-sm font-semibold">Request Logs</h2>
+            <p class="mt-1 text-xs text-muted-foreground">Live provider calls and stream events</p>
+          </div>
 
-        <h3>Prompt</h3>
-        {#each selected.promptMessages as m}
-          <div class="msg"><span class="role">{m.role}</span><pre>{msgText(m)}</pre></div>
-        {/each}
+          <ul class="space-y-1 p-2">
+            {#each rows as r (r.requestId)}
+              <li>
+                <button
+                  class={`w-full rounded-md border px-3 py-2.5 text-left transition ${rowClass(r.requestId)}`}
+                  type="button"
+                  onclick={() => (selectedId = r.requestId)}
+                >
+                  <span class="flex items-center gap-2">
+                    <span
+                      class="group/status relative grid h-5 w-5 shrink-0 place-items-center"
+                      aria-label={r.status}
+                    >
+                      <span
+                        class={`h-2.5 w-2.5 rounded-full border ${statusDotClass(r.status)}`}
+                      ></span>
+                      <span
+                        class="pointer-events-none absolute left-1/2 top-full z-20 mt-2 -translate-x-1/2 rounded-md border bg-popover px-2 py-1 text-xs font-medium text-popover-foreground opacity-0 shadow-sm transition group-hover/status:opacity-100"
+                      >
+                        {r.status}
+                      </span>
+                    </span>
+                    <span class="min-w-0 flex-1 truncate text-sm font-medium">
+                      {r.model ?? r.provider ?? "unknown"}
+                    </span>
+                  </span>
+                  <span class="mt-2 flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                    <span class="truncate">{tokens(r)} tokens</span>
+                    <span class="shrink-0">{ms(r.totalMs ?? r.ttftMs)}</span>
+                  </span>
+                </button>
+              </li>
+            {/each}
+            {#if rows.length === 0}
+              <li class="px-3 py-6 text-sm text-muted-foreground">Waiting for LLM calls...</li>
+            {/if}
+          </ul>
+        </aside>
 
-        <h3>Response</h3>
-        {#if selected.status === "streaming"}
-          <pre class="stream">{selected.streamingText}<span class="caret">▍</span></pre>
-        {:else if selected.responseMessages.length}
-          {#each selected.responseMessages as m}
-            <div class="msg"><span class="role">{m.role}</span><pre>{msgText(m)}</pre></div>
-          {/each}
-        {:else}
-          <div class="muted">—</div>
-        {/if}
-      {:else}
-        <div class="placeholder">Select a request to inspect its prompt, streaming, and tokens.</div>
-      {/if}
-    </section>
+        <section class="min-h-0 overflow-y-auto p-5">
+          {#if selected}
+            <div class="rounded-md border bg-card">
+              <div class="border-b p-4">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span
+                    class={`rounded-full border px-2 py-0.5 text-[11px] font-medium uppercase tracking-normal ${badgeClass(selected.status)}`}
+                  >
+                    {selected.status}
+                  </span>
+                  <b class="text-sm">{selected.provider}</b>
+                  <span class="text-sm text-muted-foreground">{selected.model ?? "unknown model"}</span>
+                  <span class="text-sm text-muted-foreground">{selected.operation ?? "request"}</span>
+                </div>
+                <code class="mt-2 block truncate font-mono text-xs text-muted-foreground">
+                  {selected.path}
+                </code>
+              </div>
+
+              <div class="grid gap-3 border-b p-4 text-sm sm:grid-cols-2 xl:grid-cols-5">
+                <div>
+                  <div class="text-xs text-muted-foreground">Tokens</div>
+                  <div class="mt-1 font-medium">{tokens(selected)}</div>
+                </div>
+                <div>
+                  <div class="text-xs text-muted-foreground">TTFT</div>
+                  <div class="mt-1 font-medium">{ms(selected.ttftMs)}</div>
+                </div>
+                <div>
+                  <div class="text-xs text-muted-foreground">Total</div>
+                  <div class="mt-1 font-medium">{ms(selected.totalMs)}</div>
+                </div>
+                <div>
+                  <div class="text-xs text-muted-foreground">Finish</div>
+                  <div class="mt-1 font-medium">{selected.finishReason ?? "-"}</div>
+                </div>
+                <div>
+                  <div class="text-xs text-muted-foreground">Cost</div>
+                  <div class="mt-1 font-medium">{money(selected.cost?.totalCost ?? 0)}</div>
+                </div>
+              </div>
+
+              <div class="space-y-5 p-4">
+                {#if selected.errorMessage}
+                  <pre class="whitespace-pre-wrap break-words rounded-md border border-destructive/30 bg-destructive/10 p-3 font-mono text-sm leading-6 text-destructive">{selected.errorMessage}</pre>
+                {/if}
+
+                <section>
+                  <h3 class="mb-2 text-xs font-semibold uppercase tracking-normal text-muted-foreground">
+                    Prompt
+                  </h3>
+                  <div class="space-y-3">
+                    {#each selected.promptMessages as m}
+                      <div class="rounded-md border bg-background p-3">
+                        <span class="text-[11px] font-semibold uppercase tracking-normal text-primary">
+                          {m.role}
+                        </span>
+                        <pre class="mt-2 whitespace-pre-wrap break-words font-mono text-sm leading-6">{msgText(m)}</pre>
+                      </div>
+                    {/each}
+                    {#if selected.promptMessages.length === 0}
+                      <div class="text-sm text-muted-foreground">-</div>
+                    {/if}
+                  </div>
+                </section>
+
+                <section>
+                  <h3 class="mb-2 text-xs font-semibold uppercase tracking-normal text-muted-foreground">
+                    Response
+                  </h3>
+                  {#if selected.status === "streaming"}
+                    <pre class="whitespace-pre-wrap break-words rounded-md border bg-background p-3 font-mono text-sm leading-6">{selected.streamingText}<span class="animate-pulse text-primary">|</span></pre>
+                  {:else if selected.responseMessages.length}
+                    <div class="space-y-3">
+                      {#each selected.responseMessages as m}
+                        <div class="rounded-md border bg-background p-3">
+                          <span class="text-[11px] font-semibold uppercase tracking-normal text-primary">
+                            {m.role}
+                          </span>
+                          <pre class="mt-2 whitespace-pre-wrap break-words font-mono text-sm leading-6">{msgText(m)}</pre>
+                        </div>
+                      {/each}
+                    </div>
+                  {:else}
+                    <div class="text-sm text-muted-foreground">-</div>
+                  {/if}
+                </section>
+              </div>
+            </div>
+          {:else}
+            <div class="flex h-full items-center justify-center text-sm text-muted-foreground">
+              Select a request to inspect its prompt, streaming output, and tokens.
+            </div>
+          {/if}
+        </section>
+      </section>
+    {/if}
   </main>
 </div>
-
-<style>
-  .app { display: flex; flex-direction: column; height: 100vh; }
-  header {
-    display: flex; align-items: center; gap: 10px;
-    padding: 10px 16px; border-bottom: 1px solid var(--line);
-  }
-  .logo { font-weight: 500; letter-spacing: 0.5px; }
-  .logo b { color: var(--accent); }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
-  .dot.on { background: #35c759; }
-  .conn { color: var(--muted); font-size: 13px; }
-  .count { margin-left: auto; color: var(--muted); font-size: 13px; }
-
-  main { flex: 1; display: grid; grid-template-columns: 300px 1fr; min-height: 0; }
-  .list { overflow-y: auto; border-right: 1px solid var(--line); }
-  .list li.selected button { background: var(--sel); }
-  .list button {
-    width: 100%; text-align: left; background: none; border: none; color: inherit;
-    padding: 9px 14px; cursor: pointer; border-bottom: 1px solid var(--line);
-    display: flex; align-items: center; gap: 8px; font: inherit;
-  }
-  .list button:hover { background: var(--hover); }
-  .model { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .meta { margin-left: auto; color: var(--muted); font-size: 12px; white-space: nowrap; }
-  .empty, .placeholder, .muted { color: var(--muted); padding: 16px; }
-
-  .detail { overflow-y: auto; padding: 16px 20px; }
-  .head { margin-bottom: 8px; }
-  .head code { color: var(--muted); }
-  .stats { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin-bottom: 14px; color: var(--muted); font-size: 13px; }
-  .stats b { color: var(--fg); }
-  h3 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); margin: 16px 0 6px; }
-  .msg { margin-bottom: 8px; }
-  .role { display: inline-block; font-size: 11px; text-transform: uppercase; color: var(--accent); margin-bottom: 2px; }
-  pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: var(--mono); font-size: 13px; line-height: 1.5; }
-  .stream { color: var(--fg); }
-  .caret { animation: blink 1s steps(2) infinite; color: var(--accent); }
-  .error { color: #ff6b6b; }
-
-  .badge { font-size: 11px; padding: 1px 7px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.4px; }
-  .badge.pending { background: #3a3a1a; color: #d8d85a; }
-  .badge.streaming { background: #1a2f3a; color: #5ac8fa; }
-  .badge.completed { background: #16351f; color: #35c759; }
-  .badge.error { background: #3a1a1a; color: #ff6b6b; }
-
-  @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0; } }
-</style>
