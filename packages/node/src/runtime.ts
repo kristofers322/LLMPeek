@@ -69,6 +69,9 @@ export function makeSource(sdk: Source["sdk"], transport: Source["transport"]): 
  * production by accident. `LLMPEEK=1|0` forces on/off explicitly.
  */
 export function isEnabled(): boolean {
+  // The proxy process must never self-install the interceptor — it would capture
+  // its own upstream forwarding and loop.
+  if (process.env.LLMPEEK_ROLE === "proxy") return false;
   const flag = (process.env.LLMPEEK ?? "").toLowerCase();
   if (flag === "0" || flag === "false" || flag === "off") return false;
   if (flag === "1" || flag === "true" || flag === "on") return true;

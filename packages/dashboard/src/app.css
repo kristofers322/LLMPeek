@@ -1,0 +1,22 @@
+:root {
+  --bg: #0f1113;
+  --fg: #e6e6e6;
+  --muted: #8a8f98;
+  --line: #23262b;
+  --hover: #17191c;
+  --sel: #1c2430;
+  --accent: #5ac8fa;
+  --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14px;
+}

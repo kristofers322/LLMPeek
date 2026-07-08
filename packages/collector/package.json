@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@llmpeek/schema": "*",
+    "@llmpeek/dashboard": "*",
     "ws": "^8.21.0"
   },
   "devDependencies": {

@@ -6,6 +6,32 @@ export interface ProviderMatch {
   operation: Operation;
 }
 
+const KNOWN_LLM_HOSTS = new Set([
+  "api.openai.com",
+  "api.anthropic.com",
+  "generativelanguage.googleapis.com",
+  "api.cohere.ai",
+  "api.cohere.com",
+  "api.mistral.ai",
+  "api.groq.com",
+  "openrouter.ai",
+  "api.together.xyz",
+  "api.deepseek.com",
+  "api.perplexity.ai",
+  "api.x.ai",
+  "api.fireworks.ai",
+]);
+
+/** Whether the proxy should decrypt (MITM) this host. Only known LLM hosts are
+ *  intercepted; all other HTTPS is tunneled untouched. Extend via LLMPEEK_HOSTS. */
+export function isLlmHost(host: string): boolean {
+  if (KNOWN_LLM_HOSTS.has(host)) return true;
+  if (host.endsWith(".openai.azure.com")) return true;
+  const extra = process.env.LLMPEEK_HOSTS;
+  if (extra) return extra.split(",").some((h) => h.trim() === host);
+  return false;
+}
+
 /**
  * Identify LLM traffic by host + path. Returns null for everything else, so
  * non-LLM requests are ignored entirely. Only POST is considered (generation,

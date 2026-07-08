@@ -1,4 +1,7 @@
+import { readFile } from "node:fs/promises";
 import { type IncomingMessage, type ServerResponse, createServer } from "node:http";
+import { createRequire } from "node:module";
+import { dirname, extname, join, normalize, sep } from "node:path";
 import { SCHEMA_VERSION } from "@llmpeek/schema";
 import type { LLMPeekEvent } from "@llmpeek/schema";
 import { type WebSocket, WebSocketServer } from "ws";
@@ -109,7 +112,59 @@ async function handle(
     }
     return;
   }
+  if (req.method === "GET") {
+    await serveStatic(url, res);
+    return;
+  }
   res.writeHead(404).end();
+}
+
+const MIME: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon",
+  ".woff2": "font/woff2",
+  ".map": "application/json; charset=utf-8",
+};
+
+let cachedDir: string | null | undefined;
+function dashboardDir(): string | null {
+  if (cachedDir !== undefined) return cachedDir;
+  try {
+    const require = createRequire(import.meta.url);
+    cachedDir = join(dirname(require.resolve("@llmpeek/dashboard/package.json")), "dist");
+  } catch {
+    cachedDir = null;
+  }
+  return cachedDir;
+}
+
+/** Serve the built dashboard (if present) so the whole tool is one localhost
+ *  URL. Guards against path traversal outside the dashboard dist directory. */
+async function serveStatic(url: string, res: ServerResponse): Promise<void> {
+  const dir = dashboardDir();
+  if (!dir) {
+    res.writeHead(404, { "content-type": "text/plain" }).end("llmpeek dashboard not built");
+    return;
+  }
+  const path = (url.split("?")[0] ?? "/") || "/";
+  const rel = path === "/" ? "index.html" : path.replace(/^\/+/, "");
+  const full = normalize(join(dir, rel));
+  if (full !== dir && !full.startsWith(dir + sep)) {
+    res.writeHead(403).end();
+    return;
+  }
+  try {
+    const data = await readFile(full);
+    res.writeHead(200, { "content-type": MIME[extname(full)] ?? "application/octet-stream" });
+    res.end(data);
+  } catch {
+    res.writeHead(404).end();
+  }
 }
 
 function readBody(req: IncomingMessage): Promise<string> {
