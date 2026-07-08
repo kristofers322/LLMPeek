@@ -9,6 +9,7 @@ import {
   subscribe,
 } from "./runtime.js";
 import type { Sink } from "./runtime.js";
+import { VERSION } from "./version.js";
 
 // `llmpeek` — the one published package and the single-import entry point.
 // Importing it installs the observe-only HTTP interceptor and auto-spawns the
@@ -25,9 +26,11 @@ export {
   ensureCollector,
 };
 export type { Sink };
+// Re-export the event schema types so consumers can type their sinks/events.
+export type * from "@llmpeek/schema";
 
-/** llmpeek package version. */
-export const version = "0.0.0";
+/** llmpeek package version (single-sourced from package.json). */
+export const version = VERSION;
 
 if (isEnabled()) {
   install();

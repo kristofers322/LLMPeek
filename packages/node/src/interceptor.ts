@@ -12,14 +12,8 @@ import type {
 } from "@llmpeek/schema";
 import { BatchInterceptor } from "@mswjs/interceptors";
 import nodeInterceptors from "@mswjs/interceptors/presets/node";
-import {
-  OpenAIStreamAggregator,
-  type StreamDeltaInfo,
-  decodeChatRequest,
-  decodeChatResponse,
-  decodeEmbeddingRequest,
-  decodeEmbeddingResponse,
-} from "./decoders/openai.js";
+import type { StreamDeltaInfo } from "./decoders/openai.js";
+import { createStreamAggregator, decodeRequest, decodeResponse } from "./decoders/registry.js";
 import { asObject, asString, tryParseJson } from "./json.js";
 import { type ProviderMatch, detectProvider, detectSdk } from "./providers.js";
 import { redactBody, redactHeaders, redactUrl } from "./redact.js";
@@ -105,10 +99,7 @@ function onRequest(request: Request, requestId: string): void {
       const { headers, entries: hEntries } = redactHeaders(request.headers, "request_headers");
       const redUrl = redactUrl(url);
       const bodyRedaction = redactBody(parsed, "request_body");
-      const decoded =
-        match.operation === "embedding"
-          ? decodeEmbeddingRequest(parsed)
-          : decodeChatRequest(parsed);
+      const decoded = decodeRequest(match, parsed);
       const raw: RawPayload = {
         format: match.wireFormat,
         encoding: "json",
@@ -199,16 +190,16 @@ async function consumeStream(
     const reader = body.getReader();
     const decoder = new TextDecoder();
     const parser = new SSEParser();
-    const agg = new OpenAIStreamAggregator();
+    const agg = createStreamAggregator(ctx.match);
     let firstByteAt: number | undefined;
     let firstTokenAt: number | undefined;
 
-    const handleFrames = (frames: { data: string }[]): void => {
+    const handleFrames = (frames: { event?: string; data: string }[]): void => {
       for (const frame of frames) {
         if (frame.data === "[DONE]") continue;
         const json = tryParseJson(frame.data);
         if (json === undefined) continue;
-        for (const info of agg.handleChunk(json)) {
+        for (const info of agg.handleChunk(json, frame.event)) {
           if (
             firstTokenAt === undefined &&
             (info.textDelta || info.toolCallDelta || info.refusalDelta)
@@ -310,10 +301,7 @@ function finishNonStream(
   const redaction = mergeRedaction([...rhEntries, ...bodyRedaction.entries]);
 
   if (response.ok) {
-    const decoded =
-      ctx.match.operation === "embedding"
-        ? decodeEmbeddingResponse(parsed)
-        : decodeChatResponse(parsed);
+    const decoded = decodeResponse(ctx.match, parsed);
     const event: ResponseCompletedEvent = {
       type: "response_completed",
       ...envelope(requestId, ctx),
@@ -364,6 +352,7 @@ function buildDelta(
     ...(info.index !== undefined ? { index: info.index } : {}),
     ...(info.blockIndex !== undefined ? { blockIndex: info.blockIndex } : {}),
     ...(info.textDelta ? { textDelta: info.textDelta } : {}),
+    ...(info.thinkingDelta ? { thinkingDelta: info.thinkingDelta } : {}),
     ...(info.refusalDelta ? { refusalDelta: info.refusalDelta } : {}),
     ...(info.roleDelta ? { roleDelta: info.roleDelta } : {}),
     ...(info.toolCallDelta ? { toolCallDelta: info.toolCallDelta } : {}),

@@ -6,7 +6,7 @@
   "workspaces": ["packages/*"],
   "engines": { "node": ">=18" },
   "scripts": {
-    "build": "tsc -b && npm run build --workspace @llmpeek/dashboard",
+    "build": "tsc -b && npm run build --workspace @llmpeek/dashboard && npm run build --workspace llmpeek",
     "dev": "LLMPEEK_ROLE=proxy node packages/node/dist/proxy-cli.js",
     "lint": "biome check .",
     "format": "biome format --write ."

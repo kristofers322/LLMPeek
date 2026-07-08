@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { SCHEMA_VERSION } from "@llmpeek/schema";
 import type { LLMPeekEvent, Source } from "@llmpeek/schema";
+import { VERSION } from "./version.js";
 
 /** Version stamped onto every event's `source.interceptorVersion`. */
-export const INTERCEPTOR_VERSION = "0.0.0";
+export const INTERCEPTOR_VERSION = VERSION;
 
 export type Sink = (event: LLMPeekEvent) => void;
 

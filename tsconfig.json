@@ -1,8 +1,4 @@
 {
   "files": [],
-  "references": [
-    { "path": "./packages/schema" },
-    { "path": "./packages/collector" },
-    { "path": "./packages/node" }
-  ]
+  "references": [{ "path": "./packages/schema" }, { "path": "./packages/collector" }]
 }

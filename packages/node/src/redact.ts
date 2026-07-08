@@ -15,21 +15,16 @@ const SECRET_HEADERS = new Set([
   "set-cookie",
 ]);
 
-// Header NAME looks credential-bearing (substring match, lowercased).
-const SECRET_HEADER_NAME =
-  /(authorization|auth-token|api[-_]?key|access[-_]?token|secret|credential|-auth$|^auth-)/;
-// Header/body VALUE looks like a token/secret.
+// Name looks credential-bearing (substring match, lowercased) — used for headers
+// AND url query params so the two paths stay consistent.
+const SECRET_NAME =
+  /(authorization|auth-token|api[-_]?key|apikey|access[-_]?token|access[-_]?key|refresh[-_]?token|client[-_]?secret|secret|credential|token|password|-auth$|^auth-)/;
+// A value that looks like a token/secret.
 const SECRET_VALUE = /^(bearer\s+\S|sk-[a-z0-9]|[a-z0-9._-]{40,}$)/i;
-
-const SECRET_QUERY = new Set(["api_key", "api-key", "key", "access_token"]);
-
-// Body keys whose STRING value is a credential. Matched exactly (anchored), so
-// prompt fields like "max_tokens" or nested JSON-schema property names are not
-// touched; message content lives under "content", never these keys. Values that
-// are objects/arrays (e.g. a JSON-schema property literally named "key") recurse
-// normally — only string leaves under these names are masked.
-const SECRET_BODY_KEY =
-  /^(api[_-]?key|apikey|access[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|secret[_-]?key|aws[_-]?secret[_-]?access[_-]?key|authorization|x-api-key|key|token|secret|password|passwd|credential)$/;
+// Body/query key names matched EXACTLY (anchored) so bare `key`/`token` catch
+// Gemini `?key=` and Azure `authentication.key` without over-matching "monkey".
+const SECRET_KEY =
+  /^(authorization|api[-_]?key|apikey|access[-_]?key|access[-_]?token|refresh[-_]?token|client[-_]?secret|secret[-_]?key|secret|credential|key|token|password|passwd|x-api-key)$/;
 
 /** Copy headers minus any secret ones; record what was stripped/masked. */
 export function redactHeaders(
@@ -47,7 +42,7 @@ export function redactHeaders(
       );
       return;
     }
-    if (SECRET_HEADER_NAME.test(lower) || SECRET_VALUE.test(value)) {
+    if (SECRET_NAME.test(lower) || SECRET_VALUE.test(value)) {
       out[lower] = "***";
       entries.push(entry(target, `/${lower}`, "auth_header", "masked", value.length));
       return;
@@ -57,7 +52,8 @@ export function redactHeaders(
   return { headers: out, entries };
 }
 
-/** Mask secret query params (e.g. Gemini `?key=`) in the URL. */
+/** Mask secret query params (name- or value-shaped) in the URL — same heuristic
+ *  as headers/body so a credential in `?apikey=` / `?token=` never leaks. */
 export function redactUrl(url: URL): {
   url: string;
   query: Record<string, string>;
@@ -67,7 +63,7 @@ export function redactUrl(url: URL): {
   const query: Record<string, string> = {};
   const entries: RedactionEntry[] = [];
   for (const [k, v] of u.searchParams.entries()) {
-    if (SECRET_QUERY.has(k.toLowerCase())) {
+    if (SECRET_KEY.test(k.toLowerCase()) || SECRET_VALUE.test(v)) {
       u.searchParams.set(k, "***");
       query[k] = "***";
       entries.push(entry("url", `/${k}`, "api_key", "masked", v.length));
@@ -80,10 +76,9 @@ export function redactUrl(url: URL): {
 
 /**
  * Deep-copy a parsed JSON body with secret-bearing values masked. Prompt content
- * (message text, tool args) passes through untouched — only values under
- * credential-named keys are masked — so the dashboard still shows the prompt
- * while a key placed in the body (Azure "on your data", gateway credentials) is
- * never emitted verbatim.
+ * passes through untouched — only string values under credential-named keys are
+ * masked — so the dashboard still shows the prompt while a key placed in the body
+ * (Azure "on your data", gateway credentials) is never emitted verbatim.
  */
 export function redactBody(
   value: unknown,
@@ -95,8 +90,7 @@ export function redactBody(
     if (node !== null && typeof node === "object") {
       const out: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
-        const kl = k.toLowerCase();
-        const secret = typeof v === "string" && SECRET_BODY_KEY.test(kl);
+        const secret = typeof v === "string" && SECRET_KEY.test(k.toLowerCase());
         const ptr = `${path}/${k.replace(/~/g, "~0").replace(/\//g, "~1")}`;
         if (secret) {
           out[k] = "***";
@@ -110,6 +104,15 @@ export function redactBody(
     return node;
   };
   return { body: walk(value, ""), entries };
+}
+
+/** Scrub token-shaped substrings from free text (e.g. a provider error message
+ *  that echoes the submitted credential). */
+export function scrubText(text: string): string {
+  return text
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, "Bearer ***")
+    .replace(/\bsk-[A-Za-z0-9_-]{8,}/g, "sk-***")
+    .replace(/\b[A-Za-z0-9_-]{40,}\b/g, "***");
 }
 
 function entry(

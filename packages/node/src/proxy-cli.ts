@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { getPort } from "@llmpeek/collector";
 import { CA_CERT_PATH, ensureCA } from "./ca.js";
 import { ensureCollector } from "./collector-client.js";

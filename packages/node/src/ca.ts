@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { isIP } from "node:net";
 import { join } from "node:path";
 import forge from "node-forge";
 
@@ -36,7 +37,7 @@ export async function ensureCA(): Promise<CA> {
   cert.serialNumber = `01${Date.now().toString(16)}`;
   cert.validity.notBefore = new Date(Date.now() - 24 * 3600 * 1000);
   cert.validity.notAfter = new Date();
-  cert.validity.notAfter.setFullYear(cert.validity.notBefore.getFullYear() + 5);
+  cert.validity.notAfter.setFullYear(cert.validity.notBefore.getFullYear() + 2);
   cert.setSubject(CA_ATTRS);
   cert.setIssuer(CA_ATTRS);
   cert.setExtensions([
@@ -68,15 +69,17 @@ export function certForHost(ca: CA, host: string): { key: string; cert: string }
   cert.publicKey = leaf.publicKey;
   cert.serialNumber = `${Date.now().toString(16)}${Math.floor(Math.random() * 1e6).toString(16)}`;
   cert.validity.notBefore = new Date(Date.now() - 24 * 3600 * 1000);
-  cert.validity.notAfter = new Date();
-  cert.validity.notAfter.setFullYear(cert.validity.notBefore.getFullYear() + 2);
+  cert.validity.notAfter = new Date(Date.now() + 90 * 24 * 3600 * 1000);
   cert.setSubject([{ name: "commonName", value: host }]);
   cert.setIssuer(ca.cert.subject.attributes);
   cert.setExtensions([
     { name: "basicConstraints", cA: false, critical: true },
     { name: "keyUsage", digitalSignature: true, keyEncipherment: true, critical: true },
     { name: "extKeyUsage", serverAuth: true },
-    { name: "subjectAltName", altNames: [{ type: 2, value: host }] },
+    {
+      name: "subjectAltName",
+      altNames: [isIP(host) ? { type: 7, ip: host } : { type: 2, value: host }],
+    },
     // SKI + AKI are required by stricter verifiers (macOS / Python ssl reject a
     // leaf "Missing Authority Key Identifier" without them).
     { name: "subjectKeyIdentifier" },
@@ -93,6 +96,12 @@ export function certForHost(ca: CA, host: string): { key: string; cert: string }
     key: forge.pki.privateKeyToPem(leaf.privateKey),
     cert: forge.pki.certificateToPem(cert),
   };
+  // Bound the cache so an attacker-driven flood of distinct hostnames (e.g. many
+  // *.openai.azure.com subdomains) can't grow it without limit.
+  if (leafCertCache.size >= 256) {
+    const oldest = leafCertCache.keys().next().value;
+    if (oldest !== undefined) leafCertCache.delete(oldest);
+  }
   leafCertCache.set(host, out);
   return out;
 }

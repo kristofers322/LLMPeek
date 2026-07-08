@@ -1,14 +1,23 @@
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { type IncomingMessage, type ServerResponse, createServer } from "node:http";
 import { createRequire } from "node:module";
 import { dirname, extname, join, normalize, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { SCHEMA_VERSION } from "@llmpeek/schema";
 import type { LLMPeekEvent } from "@llmpeek/schema";
 import { type WebSocket, WebSocketServer } from "ws";
 import { COLLECTOR_HOST, getPort } from "./config.js";
+import { enrich } from "./enrich.js";
 import { EventStore } from "./store.js";
 
-export const COLLECTOR_VERSION = "0.0.0";
+export const COLLECTOR_VERSION = (() => {
+  try {
+    return (createRequire(import.meta.url)("../package.json") as { version: string }).version;
+  } catch {
+    return "0.0.0";
+  }
+})();
 
 export interface Collector {
   port: number;
@@ -45,6 +54,7 @@ export function startCollector(): Promise<Collector> {
     ws.on("close", () => clients.delete(ws));
     ws.on("error", () => clients.delete(ws));
   });
+  wss.on("error", () => {});
 
   return new Promise((resolve, reject) => {
     const onError = (err: Error): void => reject(err);
@@ -102,7 +112,7 @@ async function handle(
       for (const line of body.split("\n")) {
         const trimmed = line.trim();
         if (!trimmed) continue;
-        const event = JSON.parse(trimmed) as LLMPeekEvent;
+        const event = enrich(JSON.parse(trimmed) as LLMPeekEvent);
         await store.append(event);
         broadcast(event);
       }
@@ -134,12 +144,17 @@ const MIME: Record<string, string> = {
 let cachedDir: string | null | undefined;
 function dashboardDir(): string | null {
   if (cachedDir !== undefined) return cachedDir;
+  const candidates: string[] = [];
+  // Bundled: the dashboard ships as <llmpeek>/dashboard next to the running file.
+  try {
+    candidates.push(join(dirname(fileURLToPath(import.meta.url)), "..", "dashboard"));
+  } catch {}
+  // Dev (monorepo): resolve the workspace @llmpeek/dashboard package's dist.
   try {
     const require = createRequire(import.meta.url);
-    cachedDir = join(dirname(require.resolve("@llmpeek/dashboard/package.json")), "dist");
-  } catch {
-    cachedDir = null;
-  }
+    candidates.push(join(dirname(require.resolve("@llmpeek/dashboard/package.json")), "dist"));
+  } catch {}
+  cachedDir = candidates.find((c) => existsSync(join(c, "index.html"))) ?? null;
   return cachedDir;
 }
 

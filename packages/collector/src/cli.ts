@@ -1,5 +1,10 @@
 import { startCollector } from "./server.js";
 
+// Detached collector with stdio ignored — never let an unexpected throw silently
+// kill it (the client latches `started` and won't respawn it), so stay alive.
+process.on("uncaughtException", () => {});
+process.on("unhandledRejection", () => {});
+
 // Spawned as a detached process by the llmpeek interceptor. If another instance
 // already owns the port, startCollector rejects (EADDRINUSE) and we exit quietly
 // so the caller attaches to the already-running collector.

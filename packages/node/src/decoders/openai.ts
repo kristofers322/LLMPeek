@@ -269,6 +269,7 @@ export interface StreamDeltaInfo {
   index?: number;
   blockIndex?: number;
   textDelta?: string;
+  thinkingDelta?: string;
   refusalDelta?: string;
   roleDelta?: string;
   toolCallDelta?: { index?: number; toolCallId?: string; name?: string; argumentsRaw?: string };
@@ -286,7 +287,7 @@ export class OpenAIStreamAggregator {
   private systemFingerprint?: string;
   private serviceTier?: string;
 
-  handleChunk(chunkUnknown: unknown): StreamDeltaInfo[] {
+  handleChunk(chunkUnknown: unknown, _eventType?: string): StreamDeltaInfo[] {
     const chunk = asObject(chunkUnknown);
     const sf = asString(chunk.system_fingerprint);
     if (sf) this.systemFingerprint = sf;

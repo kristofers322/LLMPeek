@@ -12,7 +12,7 @@
     },
     "./cli": "./dist/cli.js"
   },
-  "files": ["dist", "src"],
+  "files": ["dist", "src", "pricing.json"],
   "scripts": {
     "build": "tsc -b"
   },

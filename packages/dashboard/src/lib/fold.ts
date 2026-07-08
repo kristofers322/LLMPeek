@@ -40,6 +40,10 @@ export function emptyView(requestId: string): RequestView {
 
 /** Fold one event into a request's view (mutates and returns it). */
 export function applyEvent(view: RequestView, event: LLMPeekEvent): RequestView {
+  // Idempotent: on WS reconnect the collector replays its backlog, so skip any
+  // event already folded (seq is monotonic per request) — otherwise streaming
+  // text would be duplicated on every reconnect.
+  if (event.seq <= view.lastSeq) return view;
   view.events.push(event);
   view.lastSeq = Math.max(view.lastSeq, event.seq);
 
