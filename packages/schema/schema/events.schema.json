@@ -1,3 +1,587 @@
 {
-  "$comment": "Canonical LLMPeek event JSON Schema — populated by the schema-design phase."
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://llmpeek.dev/schema/events.schema.json",
+  "title": "LLMPeek Canonical Normalized Event",
+  "description": "Language-neutral, NDJSON-serializable event contract for captured LLM API calls. Mirrors packages/schema/src/events.ts. Lifecycle modeled as discriminated events keyed by `type`, correlated by `requestId`, ordered by per-request `seq`. schemaVersion 1.0.0.",
+  "$comment": "SCHEMA_VERSION=1.0.0. TOLERANT BY DESIGN: the root accepts unknown event `type`s (validating only the base envelope via UnknownEvent) and objects do NOT set additionalProperties/unevaluatedProperties:false, so unknown future fields validate. This keeps the forward-compat MINOR guarantee real for mixed Node/Python producers writing one append-only log. The TypeScript types are the STRICT authoring surface; this JSON Schema is the LENIENT wire-validation surface. Field-level mutual exclusivity (e.g. a tool_use part having no `text`) is enforced by the TS types, not here. All timestamps are epoch millis; all durations are integer ms.",
+
+  "oneOf": [
+    { "$ref": "#/$defs/RequestStartedEvent" },
+    { "$ref": "#/$defs/StreamStartEvent" },
+    { "$ref": "#/$defs/StreamDeltaEvent" },
+    { "$ref": "#/$defs/ResponseCompletedEvent" },
+    { "$ref": "#/$defs/ErrorEvent" },
+    { "$ref": "#/$defs/UnknownEvent" }
+  ],
+
+  "$defs": {
+    "EpochMillis": { "type": "integer", "description": "Absolute time, epoch milliseconds." },
+    "DurationMillis": { "type": "integer", "minimum": 0, "description": "Duration in milliseconds." },
+    "JsonPointer": { "type": "string", "description": "RFC 6901 JSON Pointer into a raw payload." },
+    "Extension": {
+      "type": "object",
+      "description": "Forward-compat extension bag. Consumers MUST ignore unknown keys.",
+      "additionalProperties": true
+    },
+
+    "Provider": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Open union. Unknown future providers validate as plain non-empty strings.",
+      "examples": ["openai", "openai_compatible", "azure_openai", "anthropic", "google_gemini", "google_vertex", "cohere", "mistral", "bedrock", "ollama", "unknown"]
+    },
+    "WireFormat": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Wire dialect the bytes followed; what to trust when degraded.",
+      "examples": ["openai_chat", "openai_responses", "openai_completions", "openai_embeddings", "anthropic_messages", "gemini_generate", "gemini_stream", "gemini_embeddings", "cohere_rerank", "unknown"]
+    },
+    "Operation": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Normalized verb, independent of provider dialect.",
+      "examples": ["chat", "completion", "embedding", "rerank", "unknown"]
+    },
+    "SdkKind": {
+      "type": "string",
+      "minLength": 1,
+      "examples": ["openai_node", "openai_python", "anthropic_node", "anthropic_python", "google_genai_node", "google_genai_python", "langchain", "llamaindex", "vercel_ai", "litellm", "raw_fetch", "raw_httpx", "unknown"]
+    },
+    "SourceLanguage": { "type": "string", "minLength": 1, "examples": ["node", "python", "unknown"] },
+    "Transport": { "type": "string", "minLength": 1, "examples": ["fetch", "node_http", "xhr", "httpx", "unknown"] },
+    "Role": { "type": "string", "minLength": 1, "examples": ["system", "user", "assistant", "tool", "developer"] },
+    "ContentPartType": {
+      "type": "string",
+      "minLength": 1,
+      "examples": ["text", "image", "audio", "file", "tool_use", "tool_result", "thinking", "refusal", "unknown"]
+    },
+    "FinishReason": {
+      "type": "string",
+      "minLength": 1,
+      "examples": ["stop", "length", "tool_calls", "content_filter", "refusal", "aborted", "error", "unknown"]
+    },
+    "ErrorKind": {
+      "type": "string",
+      "minLength": 1,
+      "examples": ["http_status", "provider_error", "network", "timeout", "aborted", "stream_error", "decode_error", "unknown"]
+    },
+    "RedactionCategory": {
+      "type": "string",
+      "minLength": 1,
+      "examples": ["auth_header", "api_key", "cookie", "message_content", "image_data", "audio_data", "pii", "custom", "other"]
+    },
+    "RedactionStrategy": {
+      "type": "string",
+      "minLength": 1,
+      "examples": ["removed", "masked", "hashed", "truncated", "summarized"]
+    },
+
+    "RawPayload": {
+      "type": "object",
+      "description": "Verbatim, post-redaction wire bytes. First-class fallback for degraded normalization.",
+      "required": ["format", "encoding"],
+      "properties": {
+        "format": { "$ref": "#/$defs/WireFormat" },
+        "encoding": { "type": "string", "minLength": 1, "examples": ["json", "text", "base64", "omitted"] },
+        "body": { "description": "Parsed JSON value, raw string, base64 string, or absent when omitted." },
+        "byteLength": { "type": "integer", "minimum": 0 },
+        "truncated": { "type": "boolean" },
+        "maxBytes": { "type": "integer", "minimum": 0 },
+        "omittedReason": { "type": "string", "examples": ["capture_disabled", "too_large", "fully_redacted", "binary"] },
+        "x": { "$ref": "#/$defs/Extension" }
+      }
+    },
+
+    "Degradation": {
+      "type": "object",
+      "description": "Set when normalization was incomplete; render from `raw` instead.",
+      "required": ["degraded", "reason"],
+      "properties": {
+        "degraded": { "const": true },
+        "reason": { "type": "string", "examples": ["unknown_wire_format", "schema_drift", "partial_parse", "parse_failed", "unsupported_feature", "producer_version_skew"] },
+        "message": { "type": "string" },
+        "unmappedPaths": { "type": "array", "items": { "$ref": "#/$defs/JsonPointer" } },
+        "producerSchemaVersion": { "type": "string" },
+        "x": { "$ref": "#/$defs/Extension" }
+      }
+    },
+
+    "RedactionEntry": {
+      "type": "object",
+      "required": ["target", "path", "category", "strategy"],
+      "properties": {
+        "target": { "type": "string", "minLength": 1, "examples": ["request_headers", "request_body", "response_headers", "response_body", "url", "messages"] },
+        "path": { "$ref": "#/$defs/JsonPointer" },
+        "category": { "$ref": "#/$defs/RedactionCategory" },
+        "strategy": { "$ref": "#/$defs/RedactionStrategy" },
+        "ruleId": { "type": "string" },
+        "originalType": { "type": "string", "examples": ["string", "number", "object", "array", "boolean", "binary"] },
+        "originalLength": { "type": "integer", "minimum": 0 },
+        "mimeType": { "type": "string" },
+        "hash": {
+          "type": "object",
+          "required": ["algo", "value"],
+          "properties": {
+            "algo": { "type": "string", "examples": ["sha256", "sha1"] },
+            "value": { "type": "string" }
+          }
+        },
+        "x": { "$ref": "#/$defs/Extension" }
+      }
+    },
+
+    "RedactionInfo": {
+      "type": "object",
+      "description": "Per-event redaction audit trail. redacted:false + empty entries positively asserts nothing was stripped.",
+      "required": ["redacted", "entries"],
+      "properties": {
+        "redacted": { "type": "boolean" },
+        "policyId": { "type": "string" },
+        "policyVersion": { "type": "string" },
+        "entries": { "type": "array", "items": { "$ref": "#/$defs/RedactionEntry" } },
+        "x": { "$ref": "#/$defs/Extension" }
+      }
+    },
+
+    "TextPart": {
+      "type": "object",
+      "required": ["type", "text"],
+      "properties": {
+        "type": { "const": "text" },
+        "text": { "type": "string" },
+        "degradation": { "$ref": "#/$defs/Degradation" },
+        "raw": {},
+        "x": { "$ref": "#/$defs/Extension" }
+      }
+    },
+    "MediaPart": {
+      "type": "object",
+      "description": "Media reference — never inlined bytes.",
+      "required": ["type"],
+      "properties": {
+        "type": { "enum": ["image", "audio", "file"] },
+        "mimeType": { "type": "string" },
+        "url": { "type": "string" },
+        "summary": {
+          "type": "object",
+          "properties": {
+            "byteLength": { "type": "integer", "minimum": 0 },
+            "sha256": { "type": "string" },
+            "redacted": { "type": "boolean" }
+          }
+        },
+        "detail": { "type": "string" },
+        "filename": { "type": "string" },
+        "degradation": { "$ref": "#/$defs/Degradation" },
+        "raw": {},
+        "x": { "$ref": "#/$defs/Extension" }
+      }
+    },
+    "ToolUsePart": {
+      "type": "object",
+      "required": ["type", "toolCallId", "name"],
+      "properties": {
+        "type": { "const": "tool_use" },
+        "toolCallId": { "type": "string" },
+        "name": { "type": "string" },
+        "arguments": { "type": "object", "additionalProperties": true },
+        "argumentsRaw": { "type": "string" },
+        "partial": { "type": "boolean" },
+        "degradation": { "$ref": "#/$defs/Degradation" },
+        "raw": {},
+        "x": { "$ref": "#/$defs/Extension" }
+      }
+    },
+    "ToolResultPart": {
+      "type": "object",
+      "required": ["type", "toolCallId"],
+      "properties": {
+        "type": { "const": "tool_result" },
+        "toolCallId": { "type": "string" },
+        "name": { "type": "string" },
+        "content": { "type": "array", "items": { "$ref": "#/$defs/ContentPart" } },
+        "isError": { "type": "boolean" },
+        "degradation": { "$ref": "#/$defs/Degradation" },
+        "raw": {},
+        "x": { "$ref": "#/$defs/Extension" }
+      }
+    },
+    "ThinkingPart": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "thinking" },
+        "text": { "type": "string" },
+        "signature": { "type": "string" },
+        "redactedThinking": { "type": "boolean" },
+        "degradation": { "$ref": "#/$defs/Degradation" },
+        "raw": {},
+        "x": { "$ref": "#/$defs/Extension" }
+      }
+    },
+    "RefusalPart": {
+      "type": "object",
+      "required": ["type", "refusal"],
+      "properties": {
+        "type": { "const": "refusal" },
+        "refusal": { "type": "string" },
+        "degradation": { "$ref": "#/$defs/Degradation" },
+        "raw": {},
+        "x": { "$ref": "#/$defs/Extension" }
+      }
+    },
+    "UnknownPart": {
+      "type": "object",
+      "description": "A recognized-but-unclassifiable part; always carries `raw`.",
+      "required": ["type", "raw"],
+      "properties": {
+        "type": { "const": "unknown" },
+        "raw": {},
+        "degradation": { "$ref": "#/$defs/Degradation" },
+        "x": { "$ref": "#/$defs/Extension" }
+      }
+    },
+    "ContentPart": {
+      "$comment": "Real discriminated union by `type`. Enforces per-type required fields; unknown extra fields are tolerated (TS enforces exclusivity).",
+      "oneOf": [
+        { "$ref": "#/$defs/TextPart" },
+        { "$ref": "#/$defs/MediaPart" },
+        { "$ref": "#/$defs/ToolUsePart" },
+        { "$ref": "#/$defs/ToolResultPart" },
+        { "$ref": "#/$defs/ThinkingPart" },
+        { "$ref": "#/$defs/RefusalPart" },
+        { "$ref": "#/$defs/UnknownPart" }
+      ]
+    },
+
+    "NormalizedMessage": {
+      "type": "object",
+      "required": ["role", "content"],
+      "properties": {
+        "role": { "$ref": "#/$defs/Role" },
+        "content": { "type": "array", "items": { "$ref": "#/$defs/ContentPart" } },
+        "name": { "type": "string" },
+        "choiceIndex": { "type": "integer" },
+        "syntheticSystem": { "type": "boolean" },
+        "degradation": { "$ref": "#/$defs/Degradation" },
+        "raw": {},
+        "x": { "$ref": "#/$defs/Extension" }
+      }
+    },
+
+    "ToolDefinition": {
+      "type": "object",
+      "required": ["type", "name"],
+      "properties": {
+        "type": { "type": "string", "examples": ["function", "web_search", "code_interpreter", "computer_use", "custom"] },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "parameters": {},
+        "x": { "$ref": "#/$defs/Extension" }
+      }
+    },
+
+    "RequestParams": {
+      "type": "object",
+      "properties": {
+        "temperature": { "type": "number" },
+        "maxTokens": { "type": "integer" },
+        "topP": { "type": "number" },
+        "topK": { "type": "number" },
+        "stop": { "type": "array", "items": { "type": "string" } },
+        "presencePenalty": { "type": "number" },
+        "frequencyPenalty": { "type": "number" },
+        "seed": { "type": "integer" },
+        "n": { "type": "integer" },
+        "logProbs": { "type": "boolean" },
+        "topLogProbs": { "type": "integer" },
+        "stream": { "type": "boolean" },
+        "responseFormat": {
+          "type": "object",
+          "required": ["type"],
+          "properties": {
+            "type": { "type": "string", "examples": ["text", "json_object", "json_schema"] },
+            "jsonSchema": {},
+            "schemaName": { "type": "string" }
+          }
+        },
+        "tools": { "type": "array", "items": { "$ref": "#/$defs/ToolDefinition" } },
+        "toolChoice": {
+          "description": "String keyword, {type,name} object, or pass-through object.",
+          "oneOf": [{ "type": "string", "minLength": 1 }, { "type": "object" }]
+        },
+        "reasoning": {
+          "type": "object",
+          "properties": {
+            "effort": { "type": "string", "examples": ["minimal", "low", "medium", "high"] },
+            "maxTokens": { "type": "integer" },
+            "enabled": { "type": "boolean" }
+          }
+        },
+        "user": { "type": "string" },
+        "x": { "$ref": "#/$defs/Extension" }
+      }
+    },
+
+    "NormalizedRequest": {
+      "type": "object",
+      "required": ["provider", "wireFormat", "host", "path", "method", "params", "raw"],
+      "properties": {
+        "provider": { "$ref": "#/$defs/Provider" },
+        "wireFormat": { "$ref": "#/$defs/WireFormat" },
+        "operation": { "$ref": "#/$defs/Operation" },
+        "host": { "type": "string" },
+        "path": { "type": "string" },
+        "method": { "type": "string", "examples": ["POST", "GET", "PUT", "PATCH", "DELETE"] },
+        "url": { "type": "string" },
+        "query": { "type": "object", "additionalProperties": { "type": "string" } },
+        "model": { "type": "string" },
+        "params": { "$ref": "#/$defs/RequestParams" },
+        "messages": { "type": "array", "items": { "$ref": "#/$defs/NormalizedMessage" } },
+        "input": {
+          "description": "Embedding/rerank input: strings or pre-tokenized id arrays.",
+          "oneOf": [
+            { "type": "array", "items": { "type": "string" } },
+            { "type": "array", "items": { "type": "array", "items": { "type": "number" } } }
+          ]
+        },
+        "headers": { "type": "object", "additionalProperties": { "type": "string" } },
+        "raw": { "$ref": "#/$defs/RawPayload" },
+        "degradation": { "$ref": "#/$defs/Degradation" },
+        "x": { "$ref": "#/$defs/Extension" }
+      }
+    },
+
+    "Usage": {
+      "type": "object",
+      "properties": {
+        "promptTokens": { "type": "integer" },
+        "completionTokens": { "type": "integer" },
+        "totalTokens": { "type": "integer" },
+        "cacheReadTokens": { "type": "integer" },
+        "cacheWriteTokens": { "type": "integer" },
+        "reasoningTokens": { "type": "integer" },
+        "audioTokens": { "type": "integer" },
+        "raw": {},
+        "x": { "$ref": "#/$defs/Extension" }
+      }
+    },
+
+    "Cost": {
+      "type": "object",
+      "required": ["currency", "totalCost", "source"],
+      "properties": {
+        "currency": { "type": "string", "examples": ["USD"] },
+        "totalCost": { "type": ["number", "null"] },
+        "inputCost": { "type": ["number", "null"] },
+        "outputCost": { "type": ["number", "null"] },
+        "cacheReadCost": { "type": ["number", "null"] },
+        "cacheWriteCost": { "type": ["number", "null"] },
+        "reasoningCost": { "type": ["number", "null"] },
+        "audioCost": { "type": ["number", "null"] },
+        "source": { "type": "string", "examples": ["litellm", "manual_override", "provider_reported", "unknown"] },
+        "pricePer1kInput": { "type": "number" },
+        "pricePer1kOutput": { "type": "number" },
+        "pricingVersion": { "type": "string" },
+        "x": { "$ref": "#/$defs/Extension" }
+      }
+    },
+
+    "Timing": {
+      "type": "object",
+      "required": ["startedAt"],
+      "properties": {
+        "startedAt": { "$ref": "#/$defs/EpochMillis" },
+        "firstByteAt": { "$ref": "#/$defs/EpochMillis" },
+        "firstTokenAt": { "$ref": "#/$defs/EpochMillis" },
+        "completedAt": { "$ref": "#/$defs/EpochMillis" },
+        "ttftMs": { "$ref": "#/$defs/DurationMillis" },
+        "totalMs": { "$ref": "#/$defs/DurationMillis" },
+        "x": { "$ref": "#/$defs/Extension" }
+      }
+    },
+
+    "EmbeddingResult": {
+      "type": "object",
+      "required": ["index"],
+      "properties": {
+        "index": { "type": "integer" },
+        "dimensions": { "type": "integer" },
+        "vector": { "type": "array", "items": { "type": "number" } },
+        "vectorOmitted": { "type": "boolean" },
+        "x": { "$ref": "#/$defs/Extension" }
+      }
+    },
+    "RerankResult": {
+      "type": "object",
+      "required": ["index"],
+      "properties": {
+        "index": { "type": "integer" },
+        "relevanceScore": { "type": "number" },
+        "document": { "type": "string" },
+        "x": { "$ref": "#/$defs/Extension" }
+      }
+    },
+    "TokenLogProb": {
+      "type": "object",
+      "required": ["token", "logprob"],
+      "properties": {
+        "token": { "type": "string" },
+        "logprob": { "type": "number" },
+        "topLogprobs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["token", "logprob"],
+            "properties": {
+              "token": { "type": "string" },
+              "logprob": { "type": "number" }
+            }
+          }
+        }
+      }
+    },
+
+    "Source": {
+      "type": "object",
+      "required": ["language", "sdk", "transport"],
+      "properties": {
+        "language": { "$ref": "#/$defs/SourceLanguage" },
+        "sdk": { "$ref": "#/$defs/SdkKind" },
+        "sdkVersion": { "type": "string" },
+        "transport": { "$ref": "#/$defs/Transport" },
+        "interceptorVersion": { "type": "string" },
+        "x": { "$ref": "#/$defs/Extension" }
+      }
+    },
+
+    "BaseEventProps": {
+      "type": "object",
+      "required": ["type", "schemaVersion", "requestId", "seq", "timestamp", "sessionId", "source"],
+      "properties": {
+        "type": { "type": "string", "minLength": 1, "examples": ["request_started", "stream_start", "stream_delta", "response_completed", "error"] },
+        "schemaVersion": { "type": "string", "examples": ["1.0.0"] },
+        "requestId": { "type": "string" },
+        "seq": { "type": "integer", "minimum": 0 },
+        "timestamp": { "$ref": "#/$defs/EpochMillis" },
+        "sessionId": { "type": "string" },
+        "processId": { "type": "string" },
+        "source": { "$ref": "#/$defs/Source" },
+        "x": { "$ref": "#/$defs/Extension" }
+      }
+    },
+
+    "RequestStartedEvent": {
+      "allOf": [{ "$ref": "#/$defs/BaseEventProps" }],
+      "properties": {
+        "type": { "const": "request_started" },
+        "request": { "$ref": "#/$defs/NormalizedRequest" },
+        "redaction": { "$ref": "#/$defs/RedactionInfo" },
+        "timing": {
+          "type": "object",
+          "required": ["startedAt"],
+          "properties": { "startedAt": { "$ref": "#/$defs/EpochMillis" }, "x": { "$ref": "#/$defs/Extension" } }
+        }
+      },
+      "required": ["type", "request", "redaction", "timing"]
+    },
+
+    "StreamStartEvent": {
+      "allOf": [{ "$ref": "#/$defs/BaseEventProps" }],
+      "properties": {
+        "type": { "const": "stream_start" },
+        "firstByteAt": { "$ref": "#/$defs/EpochMillis" },
+        "httpStatus": { "type": "integer" },
+        "responseHeaders": { "type": "object", "additionalProperties": { "type": "string" } },
+        "redaction": { "$ref": "#/$defs/RedactionInfo" }
+      },
+      "required": ["type", "firstByteAt"]
+    },
+
+    "StreamDeltaEvent": {
+      "allOf": [{ "$ref": "#/$defs/BaseEventProps" }],
+      "properties": {
+        "type": { "const": "stream_delta" },
+        "index": { "type": "integer" },
+        "blockIndex": { "type": "integer" },
+        "textDelta": { "type": "string" },
+        "thinkingDelta": { "type": "string" },
+        "toolCallDelta": {
+          "type": "object",
+          "properties": {
+            "index": { "type": "integer" },
+            "toolCallId": { "type": "string" },
+            "name": { "type": "string" },
+            "argumentsRaw": { "type": "string" }
+          }
+        },
+        "roleDelta": { "$ref": "#/$defs/Role" },
+        "finishReason": { "$ref": "#/$defs/FinishReason" },
+        "usage": { "$ref": "#/$defs/Usage" },
+        "providerEventType": { "type": "string" },
+        "raw": { "$ref": "#/$defs/RawPayload" },
+        "redaction": { "$ref": "#/$defs/RedactionInfo" },
+        "degradation": { "$ref": "#/$defs/Degradation" }
+      },
+      "required": ["type"]
+    },
+
+    "ResponseCompletedEvent": {
+      "allOf": [{ "$ref": "#/$defs/BaseEventProps" }],
+      "properties": {
+        "type": { "const": "response_completed" },
+        "messages": { "type": "array", "items": { "$ref": "#/$defs/NormalizedMessage" } },
+        "embeddings": { "type": "array", "items": { "$ref": "#/$defs/EmbeddingResult" } },
+        "rerankResults": { "type": "array", "items": { "$ref": "#/$defs/RerankResult" } },
+        "logprobs": { "type": "array", "items": { "$ref": "#/$defs/TokenLogProb" } },
+        "finishReason": { "$ref": "#/$defs/FinishReason" },
+        "rawFinishReason": { "type": "string" },
+        "systemFingerprint": { "type": "string" },
+        "serviceTier": { "type": "string" },
+        "httpStatus": { "type": "integer" },
+        "responseHeaders": { "type": "object", "additionalProperties": { "type": "string" } },
+        "usage": { "$ref": "#/$defs/Usage" },
+        "cost": { "$ref": "#/$defs/Cost" },
+        "timing": { "$ref": "#/$defs/Timing" },
+        "streamed": { "type": "boolean" },
+        "raw": { "$ref": "#/$defs/RawPayload" },
+        "redaction": { "$ref": "#/$defs/RedactionInfo" },
+        "degradation": { "$ref": "#/$defs/Degradation" }
+      },
+      "required": ["type", "timing", "streamed", "raw", "redaction"]
+    },
+
+    "ErrorEvent": {
+      "allOf": [{ "$ref": "#/$defs/BaseEventProps" }],
+      "properties": {
+        "type": { "const": "error" },
+        "errorKind": { "$ref": "#/$defs/ErrorKind" },
+        "httpStatus": { "type": "integer" },
+        "providerErrorType": { "type": "string" },
+        "message": { "type": "string" },
+        "retryable": { "type": "boolean" },
+        "responseHeaders": { "type": "object", "additionalProperties": { "type": "string" } },
+        "partialMessages": { "type": "array", "items": { "$ref": "#/$defs/NormalizedMessage" } },
+        "usage": { "$ref": "#/$defs/Usage" },
+        "cost": { "$ref": "#/$defs/Cost" },
+        "timing": { "$ref": "#/$defs/Timing" },
+        "raw": { "$ref": "#/$defs/RawPayload" },
+        "redaction": { "$ref": "#/$defs/RedactionInfo" },
+        "degradation": { "$ref": "#/$defs/Degradation" }
+      },
+      "required": ["type", "errorKind", "message", "timing"]
+    },
+
+    "UnknownEvent": {
+      "$comment": "Forward-compat catch-all: any event whose `type` is not one of the five known types validates against the base envelope only. This is what makes 'a new event type is a non-breaking MINOR' true for older validators.",
+      "allOf": [{ "$ref": "#/$defs/BaseEventProps" }],
+      "not": {
+        "properties": {
+          "type": { "enum": ["request_started", "stream_start", "stream_delta", "response_completed", "error"] }
+        },
+        "required": ["type"]
+      },
+      "required": ["type"]
+    }
+  }
 }

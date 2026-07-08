@@ -1,8 +1,5 @@
-// The canonical LLMPeek normalized event schema.
-//
-// This is the language-neutral contract shared by every capture layer (the Node
-// interceptor today, the Python httpx shim later) and every consumer (the local
-// collector and the dashboard). The concrete event types are produced by the
-// schema-design phase and land in ./events.ts; this placeholder keeps the
-// package's public surface stable until then.
-export const SCHEMA_VERSION = 1;
+// The canonical LLMPeek normalized event schema — the language-neutral contract
+// shared by every capture layer (the Node interceptor, the future Python httpx
+// shim) and every consumer (the local collector, the dashboard). The concrete
+// event types live in ./events.ts and mirror ./events.schema.json.
+export * from "./events.js";

@@ -45,7 +45,7 @@ export const SCHEMA_VERSION = "1.0.0" as const;
  *           ignoring what they do not recognize.
  *   PATCH — docs/comments/clarifications, no shape change.
  *
- * Forward-compat is engineered three ways, not just documented:
+ * Forward-compat is engineered four ways, not just documented:
  *   1) OPEN string-literal unions: every provider/role/etc. union is widened
  *      with `| (string & {})`. TS still autocompletes the known members and
  *      still lets you `switch` on them, but an unknown value from a newer
@@ -58,6 +58,14 @@ export const SCHEMA_VERSION = "1.0.0" as const;
  *      drifts and a payload can't be mapped, the producer sets `degraded` and
  *      still ships the `raw` payload, so the dashboard degrades to raw-JSON
  *      display instead of dropping the call. Raw payloads are first-class.
+ *   4) TOLERANT VALIDATION: the companion JSON Schema (events.schema.json) is
+ *      intentionally OPEN — its root accepts unknown event `type`s (validating
+ *      only the base envelope) and every object tolerates unknown fields. This
+ *      is what makes the MINOR guarantee REAL rather than aspirational: an old
+ *      validator does not hard-reject NDJSON produced by a newer Node/Python
+ *      interceptor writing the same log. These TypeScript types remain the
+ *      STRICT authoring surface; the JSON Schema is the LENIENT wire-validation
+ *      surface. They may differ in exactly this direction (TS stricter).
  */
 
 /* ============================================================================
@@ -120,8 +128,15 @@ export type WireFormat = Open<
   | "anthropic_messages" // POST /v1/messages
   | "gemini_generate" // :generateContent
   | "gemini_stream" // :streamGenerateContent
+  | "gemini_embeddings" // :embedContent / :batchEmbedContents
+  | "cohere_rerank" // rerank endpoints
   | "unknown"
 >;
+
+/** The normalized operation/verb the call performs, independent of provider
+ *  dialect. `wireFormat` is the provider-specific shape; `operation` is what
+ *  the call DOES, so consumers branch (chat vs embedding) uniformly. */
+export type Operation = Open<"chat" | "completion" | "embedding" | "rerank" | "unknown">;
 
 /** Detected SDK/framework that originated the call. `raw_fetch` means no known
  *  SDK fingerprint matched (bare fetch/http/httpx). */
@@ -283,7 +298,9 @@ export type RedactionStrategy = Open<
  */
 export interface RedactionEntry extends Extensible {
   /** Where the removal happened: which payload + JSON Pointer within it. */
-  target: Open<"request_headers" | "request_body" | "response_headers" | "response_body" | "url" | "messages">;
+  target: Open<
+    "request_headers" | "request_body" | "response_headers" | "response_body" | "url" | "messages"
+  >;
   path: JsonPointer;
   category: RedactionCategory;
   strategy: RedactionStrategy;
@@ -436,6 +453,10 @@ export interface NormalizedMessage extends Extensible {
   content: ContentPart[];
   /** OpenAI parallel-tool naming / participant name, when present. */
   name?: string;
+  /** Which choice/candidate this terminal message corresponds to, so the fold
+   *  from stream deltas is keyed explicitly instead of by array position
+   *  (OpenAI choices[].index / Gemini candidates[].index). */
+  choiceIndex?: number;
   /** True when synthesized from a top-level system param (Anthropic/Gemini
    *  systemInstruction) rather than an in-array message. */
   syntheticSystem?: boolean;
@@ -506,6 +527,8 @@ export interface RequestParams extends Extensible {
 export interface NormalizedRequest extends Extensible {
   provider: Provider;
   wireFormat: WireFormat;
+  /** Normalized verb: chat / completion / embedding / rerank. */
+  operation?: Operation;
   host: string;
   /** URL path only, query stripped into `query` (secrets redacted). */
   path: string;
@@ -515,7 +538,12 @@ export interface NormalizedRequest extends Extensible {
   query?: Record<string, string>;
   model?: string;
   params: RequestParams;
-  messages: NormalizedMessage[];
+  /** Chat/completion turns. Optional because embedding/rerank requests carry
+   *  `input` instead and have no conversation. */
+  messages?: NormalizedMessage[];
+  /** Embedding/rerank input: strings (or pre-tokenized id arrays) to embed, or
+   *  the documents to rerank. Present only for operation embedding/rerank. */
+  input?: string[] | number[][];
   /** Request headers AFTER redaction (auth stripped, kept for debugging). */
   headers?: Record<string, string>;
   /** Verbatim (post-redaction) request body — the raw fallback. */
@@ -567,6 +595,7 @@ export interface Cost extends Extensible {
   cacheReadCost?: number | null;
   cacheWriteCost?: number | null;
   reasoningCost?: number | null;
+  audioCost?: number | null;
   /** How the number was obtained; drives a "estimated"/"unknown" UI badge. */
   source: Open<"litellm" | "manual_override" | "provider_reported" | "unknown">;
   pricePer1kInput?: number;
@@ -596,6 +625,37 @@ export interface Timing extends Extensible {
 }
 
 /* ============================================================================
+ * 6b. Embeddings, rerank & returned logprobs
+ * ========================================================================== */
+
+/** One embedding vector result. Vectors are large, so by default only their
+ *  shape is kept (`dimensions`) and the floats are omitted — mirroring how
+ *  media bytes are summarized rather than inlined. Set `vector` only when full
+ *  vector capture is explicitly enabled. */
+export interface EmbeddingResult extends Extensible {
+  index: number;
+  dimensions?: number;
+  vector?: number[];
+  /** True when the vector was dropped to keep the event small. */
+  vectorOmitted?: boolean;
+}
+
+/** One rerank result: a scored/ranked input document. */
+export interface RerankResult extends Extensible {
+  index: number;
+  relevanceScore?: number;
+  /** The document text, when retained (may be redacted/omitted). */
+  document?: string;
+}
+
+/** A normalized returned log-probability for one generated token. */
+export interface TokenLogProb {
+  token: string;
+  logprob: number;
+  topLogprobs?: { token: string; logprob: number }[];
+}
+
+/* ============================================================================
  * 7. Event envelope & the discriminated event union
  * ========================================================================== */
 
@@ -622,7 +682,10 @@ export interface BaseEvent extends Extensible {
   requestId: string;
   /** Monotonic per-request sequence, starting at 0 on `request_started`. */
   seq: number;
-  /** Emit time, epoch millis. Ordering should prefer `seq` over this. */
+  /** Emit time, epoch millis. Ordering should prefer `seq` over this. NOTE:
+   *  `seq` is monotonic only WITHIN a `requestId`; there is no global clock, so
+   *  ordering ACROSS requests (or across Node/Python producers sharing one log)
+   *  is best-effort via `timestamp` and subject to inter-process clock skew. */
   timestamp: EpochMillis;
   /** Groups requests from one interceptor lifetime/run. */
   sessionId: string;
@@ -644,7 +707,7 @@ export interface RequestStartedEvent extends BaseEvent {
   type: "request_started";
   request: NormalizedRequest;
   redaction: RedactionInfo;
-  timing: Pick<Timing, "startedAt">;
+  timing: { startedAt: EpochMillis } & Extensible;
 }
 
 /** [2] Stream opened / first byte. Optional but recommended: it pins TTFT and
@@ -656,6 +719,9 @@ export interface StreamStartEvent extends BaseEvent {
   httpStatus?: number;
   /** Response headers after redaction (e.g. request-id, rate-limit). */
   responseHeaders?: Record<string, string>;
+  /** Audit trail for redaction applied to `responseHeaders` (e.g. Set-Cookie,
+   *  rate-limit tokens). */
+  redaction?: RedactionInfo;
 }
 
 /**
@@ -668,8 +734,13 @@ export interface StreamStartEvent extends BaseEvent {
  */
 export interface StreamDeltaEvent extends BaseEvent {
   type: "stream_delta";
-  /** Which choice/candidate/content-block index this applies to. */
+  /** Which choice/candidate this delta applies to (OpenAI choices[].index /
+   *  Gemini candidates[].index). Absent ⇒ choice 0 / message-scoped. */
   index?: number;
+  /** Content-block / part index WITHIN that choice (Anthropic content[].index /
+   *  Gemini parts[] index / OpenAI tool_calls[].index for tool blocks). The
+   *  reassembly key is the pair (index, blockIndex). */
+  blockIndex?: number;
   /** Incremental text appended to that block, if any. */
   textDelta?: string;
   /** Incremental reasoning/thinking text, if any. */
@@ -677,7 +748,10 @@ export interface StreamDeltaEvent extends BaseEvent {
   /** Incremental tool-call info. `argumentsRaw` is a PARTIAL JSON fragment to
    *  be concatenated in `seq` order; do not JSON.parse until complete. */
   toolCallDelta?: {
-    index: number;
+    /** Tool-call ordinal when the provider carries one (OpenAI
+     *  tool_calls[].index). Optional: Anthropic addresses a tool_use by the
+     *  delta's `blockIndex`, so no separate tool index exists. */
+    index?: number;
     toolCallId?: string;
     name?: string;
     argumentsRaw?: string;
@@ -685,8 +759,9 @@ export interface StreamDeltaEvent extends BaseEvent {
   /** Role announced by the opening frame (OpenAI first chunk / Anthropic
    *  message_start), when this delta carries it. */
   roleDelta?: Role;
-  /** Finish reason if THIS delta is the terminal one for its index
-   *  (OpenAI finish_reason / Anthropic message_delta.stop_reason). */
+  /** Finish reason on the terminal delta. Scope follows `index`: present WITH
+   *  an `index` ⇒ that choice finished (OpenAI finish_reason); present WITHOUT
+   *  an `index` ⇒ whole-message stop (Anthropic message_delta.stop_reason). */
   finishReason?: FinishReason;
   /** Usage if the provider attaches it to a delta (Anthropic message_delta,
    *  OpenAI final chunk with stream_options.include_usage). */
@@ -698,6 +773,9 @@ export interface StreamDeltaEvent extends BaseEvent {
   providerEventType?: string;
   /** Verbatim decoded SSE/JSON frame — the raw fallback for this delta. */
   raw?: RawPayload;
+  /** Audit trail when content redaction stripped/masked this delta's text,
+   *  thinking, or tool-argument fragments before egress. */
+  redaction?: RedactionInfo;
   /** Set if this frame could not be normalized (drift mid-stream). */
   degradation?: Degradation;
 }
@@ -711,11 +789,23 @@ export interface StreamDeltaEvent extends BaseEvent {
  */
 export interface ResponseCompletedEvent extends BaseEvent {
   type: "response_completed";
-  /** Reassembled assistant message(s) — one per choice/candidate. */
-  messages: NormalizedMessage[];
+  /** Reassembled assistant message(s) — one per choice/candidate. Optional
+   *  because embedding/rerank responses carry no messages (see `embeddings` /
+   *  `rerankResults`). */
+  messages?: NormalizedMessage[];
+  /** Embedding vectors, when this was an embedding call. */
+  embeddings?: EmbeddingResult[];
+  /** Rerank scores, when this was a rerank call. */
+  rerankResults?: RerankResult[];
+  /** Returned per-token logprobs, when the caller requested them. */
+  logprobs?: TokenLogProb[];
   finishReason?: FinishReason;
   /** Provider-native finish/stop reason string, unmapped. */
   rawFinishReason?: string;
+  /** OpenAI system_fingerprint, when present. */
+  systemFingerprint?: string;
+  /** OpenAI service_tier, when present. */
+  serviceTier?: string;
   httpStatus?: number;
   responseHeaders?: Record<string, string>;
   usage?: Usage;
@@ -748,7 +838,10 @@ export interface ErrorEvent extends BaseEvent {
   /** Retryability hint when derivable (429/5xx/network → often true). */
   retryable?: boolean;
   responseHeaders?: Record<string, string>;
-  /** Partial results captured before failure (e.g. tokens streamed so far). */
+  /** Partial results captured before failure (e.g. tokens streamed so far).
+   *  AUTHORITATIVE partial: this MUST equal the fold of all prior stream_delta
+   *  events for this requestId — deltas are the live/advisory feed, this is the
+   *  record of truth. `usage` below, when present, is cumulative-so-far. */
   partialMessages?: NormalizedMessage[];
   usage?: Usage;
   cost?: Cost;
