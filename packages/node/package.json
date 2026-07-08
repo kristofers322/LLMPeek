@@ -9,6 +9,7 @@
     "build": "tsc -b"
   },
   "dependencies": {
-    "@llmpeek/schema": "*"
+    "@llmpeek/schema": "*",
+    "@mswjs/interceptors": "^0.41.9"
   }
 }

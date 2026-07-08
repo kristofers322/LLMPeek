@@ -235,7 +235,7 @@ export interface RawPayload extends Extensible {
   truncated?: boolean;
   maxBytes?: number;
   /** Why the body was not captured, when encoding==="omitted". */
-  omittedReason?: Open<"capture_disabled" | "too_large" | "fully_redacted" | "binary">;
+  omittedReason?: Open<"capture_disabled" | "too_large" | "fully_redacted" | "binary" | "streamed">;
 }
 
 /**
@@ -485,6 +485,14 @@ export type ToolChoice =
   | { type: "function" | "tool"; name: string }
   | Record<string, unknown>; // pass-through for shapes we do not model yet
 
+/** Normalized structured-output request (OpenAI response_format / Anthropic
+ *  tool-based JSON / Gemini responseSchema). */
+export interface ResponseFormat {
+  type: Open<"text" | "json_object" | "json_schema">;
+  jsonSchema?: unknown;
+  schemaName?: string;
+}
+
 /**
  * Normalized, provider-agnostic generation parameters. All optional — presence
  * mirrors what the caller actually sent. Provider-only knobs that have no
@@ -506,11 +514,7 @@ export interface RequestParams extends Extensible {
   stream?: boolean;
   /** OpenAI response_format / Anthropic tool-based JSON / Gemini
    *  responseMimeType+responseSchema, normalized. */
-  responseFormat?: {
-    type: Open<"text" | "json_object" | "json_schema">;
-    jsonSchema?: unknown;
-    schemaName?: string;
-  };
+  responseFormat?: ResponseFormat;
   tools?: ToolDefinition[];
   toolChoice?: ToolChoice;
   /** Anthropic/OpenAI reasoning controls (effort / thinking budget). */
@@ -624,6 +628,16 @@ export interface Timing extends Extensible {
   totalMs?: DurationMillis; // completedAt - startedAt
 }
 
+/** Where an event came from: source language, detected SDK, transport. */
+export interface Source extends Extensible {
+  language: SourceLanguage;
+  sdk: SdkKind;
+  sdkVersion?: string;
+  transport: Transport;
+  /** LLMPeek interceptor package version that produced this. */
+  interceptorVersion?: string;
+}
+
 /* ============================================================================
  * 6b. Embeddings, rerank & returned logprobs
  * ========================================================================== */
@@ -691,14 +705,7 @@ export interface BaseEvent extends Extensible {
   sessionId: string;
   /** OS process id (or runtime-equivalent) that emitted the event. */
   processId?: string;
-  source: {
-    language: SourceLanguage;
-    sdk: SdkKind;
-    sdkVersion?: string;
-    transport: Transport;
-    /** LLMPeek interceptor package version that produced this. */
-    interceptorVersion?: string;
-  } & Extensible;
+  source: Source;
 }
 
 /** [1] Lifecycle start. Carries the fully-normalized request + raw body +
@@ -745,6 +752,8 @@ export interface StreamDeltaEvent extends BaseEvent {
   textDelta?: string;
   /** Incremental reasoning/thinking text, if any. */
   thinkingDelta?: string;
+  /** Incremental refusal text (OpenAI streamed `delta.refusal`), if any. */
+  refusalDelta?: string;
   /** Incremental tool-call info. `argumentsRaw` is a PARTIAL JSON fragment to
    *  be concatenated in `seq` order; do not JSON.parse until complete. */
   toolCallDelta?: {

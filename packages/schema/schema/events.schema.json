@@ -16,7 +16,11 @@
 
   "$defs": {
     "EpochMillis": { "type": "integer", "description": "Absolute time, epoch milliseconds." },
-    "DurationMillis": { "type": "integer", "minimum": 0, "description": "Duration in milliseconds." },
+    "DurationMillis": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Duration in milliseconds."
+    },
     "JsonPointer": { "type": "string", "description": "RFC 6901 JSON Pointer into a raw payload." },
     "Extension": {
       "type": "object",
@@ -28,13 +32,36 @@
       "type": "string",
       "minLength": 1,
       "description": "Open union. Unknown future providers validate as plain non-empty strings.",
-      "examples": ["openai", "openai_compatible", "azure_openai", "anthropic", "google_gemini", "google_vertex", "cohere", "mistral", "bedrock", "ollama", "unknown"]
+      "examples": [
+        "openai",
+        "openai_compatible",
+        "azure_openai",
+        "anthropic",
+        "google_gemini",
+        "google_vertex",
+        "cohere",
+        "mistral",
+        "bedrock",
+        "ollama",
+        "unknown"
+      ]
     },
     "WireFormat": {
       "type": "string",
       "minLength": 1,
       "description": "Wire dialect the bytes followed; what to trust when degraded.",
-      "examples": ["openai_chat", "openai_responses", "openai_completions", "openai_embeddings", "anthropic_messages", "gemini_generate", "gemini_stream", "gemini_embeddings", "cohere_rerank", "unknown"]
+      "examples": [
+        "openai_chat",
+        "openai_responses",
+        "openai_completions",
+        "openai_embeddings",
+        "anthropic_messages",
+        "gemini_generate",
+        "gemini_stream",
+        "gemini_embeddings",
+        "cohere_rerank",
+        "unknown"
+      ]
     },
     "Operation": {
       "type": "string",
@@ -45,30 +72,94 @@
     "SdkKind": {
       "type": "string",
       "minLength": 1,
-      "examples": ["openai_node", "openai_python", "anthropic_node", "anthropic_python", "google_genai_node", "google_genai_python", "langchain", "llamaindex", "vercel_ai", "litellm", "raw_fetch", "raw_httpx", "unknown"]
+      "examples": [
+        "openai_node",
+        "openai_python",
+        "anthropic_node",
+        "anthropic_python",
+        "google_genai_node",
+        "google_genai_python",
+        "langchain",
+        "llamaindex",
+        "vercel_ai",
+        "litellm",
+        "raw_fetch",
+        "raw_httpx",
+        "unknown"
+      ]
     },
-    "SourceLanguage": { "type": "string", "minLength": 1, "examples": ["node", "python", "unknown"] },
-    "Transport": { "type": "string", "minLength": 1, "examples": ["fetch", "node_http", "xhr", "httpx", "unknown"] },
-    "Role": { "type": "string", "minLength": 1, "examples": ["system", "user", "assistant", "tool", "developer"] },
+    "SourceLanguage": {
+      "type": "string",
+      "minLength": 1,
+      "examples": ["node", "python", "unknown"]
+    },
+    "Transport": {
+      "type": "string",
+      "minLength": 1,
+      "examples": ["fetch", "node_http", "xhr", "httpx", "unknown"]
+    },
+    "Role": {
+      "type": "string",
+      "minLength": 1,
+      "examples": ["system", "user", "assistant", "tool", "developer"]
+    },
     "ContentPartType": {
       "type": "string",
       "minLength": 1,
-      "examples": ["text", "image", "audio", "file", "tool_use", "tool_result", "thinking", "refusal", "unknown"]
+      "examples": [
+        "text",
+        "image",
+        "audio",
+        "file",
+        "tool_use",
+        "tool_result",
+        "thinking",
+        "refusal",
+        "unknown"
+      ]
     },
     "FinishReason": {
       "type": "string",
       "minLength": 1,
-      "examples": ["stop", "length", "tool_calls", "content_filter", "refusal", "aborted", "error", "unknown"]
+      "examples": [
+        "stop",
+        "length",
+        "tool_calls",
+        "content_filter",
+        "refusal",
+        "aborted",
+        "error",
+        "unknown"
+      ]
     },
     "ErrorKind": {
       "type": "string",
       "minLength": 1,
-      "examples": ["http_status", "provider_error", "network", "timeout", "aborted", "stream_error", "decode_error", "unknown"]
+      "examples": [
+        "http_status",
+        "provider_error",
+        "network",
+        "timeout",
+        "aborted",
+        "stream_error",
+        "decode_error",
+        "unknown"
+      ]
     },
     "RedactionCategory": {
       "type": "string",
       "minLength": 1,
-      "examples": ["auth_header", "api_key", "cookie", "message_content", "image_data", "audio_data", "pii", "custom", "other"]
+      "examples": [
+        "auth_header",
+        "api_key",
+        "cookie",
+        "message_content",
+        "image_data",
+        "audio_data",
+        "pii",
+        "custom",
+        "other"
+      ]
     },
     "RedactionStrategy": {
       "type": "string",
@@ -82,12 +173,21 @@
       "required": ["format", "encoding"],
       "properties": {
         "format": { "$ref": "#/$defs/WireFormat" },
-        "encoding": { "type": "string", "minLength": 1, "examples": ["json", "text", "base64", "omitted"] },
-        "body": { "description": "Parsed JSON value, raw string, base64 string, or absent when omitted." },
+        "encoding": {
+          "type": "string",
+          "minLength": 1,
+          "examples": ["json", "text", "base64", "omitted"]
+        },
+        "body": {
+          "description": "Parsed JSON value, raw string, base64 string, or absent when omitted."
+        },
         "byteLength": { "type": "integer", "minimum": 0 },
         "truncated": { "type": "boolean" },
         "maxBytes": { "type": "integer", "minimum": 0 },
-        "omittedReason": { "type": "string", "examples": ["capture_disabled", "too_large", "fully_redacted", "binary"] },
+        "omittedReason": {
+          "type": "string",
+          "examples": ["capture_disabled", "too_large", "fully_redacted", "binary", "streamed"]
+        },
         "x": { "$ref": "#/$defs/Extension" }
       }
     },
@@ -98,7 +198,17 @@
       "required": ["degraded", "reason"],
       "properties": {
         "degraded": { "const": true },
-        "reason": { "type": "string", "examples": ["unknown_wire_format", "schema_drift", "partial_parse", "parse_failed", "unsupported_feature", "producer_version_skew"] },
+        "reason": {
+          "type": "string",
+          "examples": [
+            "unknown_wire_format",
+            "schema_drift",
+            "partial_parse",
+            "parse_failed",
+            "unsupported_feature",
+            "producer_version_skew"
+          ]
+        },
         "message": { "type": "string" },
         "unmappedPaths": { "type": "array", "items": { "$ref": "#/$defs/JsonPointer" } },
         "producerSchemaVersion": { "type": "string" },
@@ -110,12 +220,26 @@
       "type": "object",
       "required": ["target", "path", "category", "strategy"],
       "properties": {
-        "target": { "type": "string", "minLength": 1, "examples": ["request_headers", "request_body", "response_headers", "response_body", "url", "messages"] },
+        "target": {
+          "type": "string",
+          "minLength": 1,
+          "examples": [
+            "request_headers",
+            "request_body",
+            "response_headers",
+            "response_body",
+            "url",
+            "messages"
+          ]
+        },
         "path": { "$ref": "#/$defs/JsonPointer" },
         "category": { "$ref": "#/$defs/RedactionCategory" },
         "strategy": { "$ref": "#/$defs/RedactionStrategy" },
         "ruleId": { "type": "string" },
-        "originalType": { "type": "string", "examples": ["string", "number", "object", "array", "boolean", "binary"] },
+        "originalType": {
+          "type": "string",
+          "examples": ["string", "number", "object", "array", "boolean", "binary"]
+        },
         "originalLength": { "type": "integer", "minimum": 0 },
         "mimeType": { "type": "string" },
         "hash": {
@@ -273,7 +397,10 @@
       "type": "object",
       "required": ["type", "name"],
       "properties": {
-        "type": { "type": "string", "examples": ["function", "web_search", "code_interpreter", "computer_use", "custom"] },
+        "type": {
+          "type": "string",
+          "examples": ["function", "web_search", "code_interpreter", "computer_use", "custom"]
+        },
         "name": { "type": "string" },
         "description": { "type": "string" },
         "parameters": {},
@@ -379,7 +506,10 @@
         "cacheWriteCost": { "type": ["number", "null"] },
         "reasoningCost": { "type": ["number", "null"] },
         "audioCost": { "type": ["number", "null"] },
-        "source": { "type": "string", "examples": ["litellm", "manual_override", "provider_reported", "unknown"] },
+        "source": {
+          "type": "string",
+          "examples": ["litellm", "manual_override", "provider_reported", "unknown"]
+        },
         "pricePer1kInput": { "type": "number" },
         "pricePer1kOutput": { "type": "number" },
         "pricingVersion": { "type": "string" },
@@ -459,7 +589,17 @@
       "type": "object",
       "required": ["type", "schemaVersion", "requestId", "seq", "timestamp", "sessionId", "source"],
       "properties": {
-        "type": { "type": "string", "minLength": 1, "examples": ["request_started", "stream_start", "stream_delta", "response_completed", "error"] },
+        "type": {
+          "type": "string",
+          "minLength": 1,
+          "examples": [
+            "request_started",
+            "stream_start",
+            "stream_delta",
+            "response_completed",
+            "error"
+          ]
+        },
         "schemaVersion": { "type": "string", "examples": ["1.0.0"] },
         "requestId": { "type": "string" },
         "seq": { "type": "integer", "minimum": 0 },
@@ -480,7 +620,10 @@
         "timing": {
           "type": "object",
           "required": ["startedAt"],
-          "properties": { "startedAt": { "$ref": "#/$defs/EpochMillis" }, "x": { "$ref": "#/$defs/Extension" } }
+          "properties": {
+            "startedAt": { "$ref": "#/$defs/EpochMillis" },
+            "x": { "$ref": "#/$defs/Extension" }
+          }
         }
       },
       "required": ["type", "request", "redaction", "timing"]
@@ -506,6 +649,7 @@
         "blockIndex": { "type": "integer" },
         "textDelta": { "type": "string" },
         "thinkingDelta": { "type": "string" },
+        "refusalDelta": { "type": "string" },
         "toolCallDelta": {
           "type": "object",
           "properties": {
@@ -577,7 +721,15 @@
       "allOf": [{ "$ref": "#/$defs/BaseEventProps" }],
       "not": {
         "properties": {
-          "type": { "enum": ["request_started", "stream_start", "stream_delta", "response_completed", "error"] }
+          "type": {
+            "enum": [
+              "request_started",
+              "stream_start",
+              "stream_delta",
+              "response_completed",
+              "error"
+            ]
+          }
         },
         "required": ["type"]
       },
