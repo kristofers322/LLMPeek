@@ -18,6 +18,7 @@
   ],
   "license": "MIT",
   "author": "Kristofers Gulbis",
+  "contributors": ["Mason Salter (https://github.com/masonsalter)"],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/kristofers322/llmpeek.git"
