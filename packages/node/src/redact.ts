@@ -1,4 +1,11 @@
-import type { RedactionEntry } from "@llmpeek/schema";
+import type {
+  ContentPart,
+  LLMPeekEvent,
+  NormalizedMessage,
+  RawPayload,
+  RedactionEntry,
+  RedactionInfo,
+} from "@llmpeek/schema";
 
 // Secrets stripped BEFORE any event leaves the process (redaction-at-the-boundary).
 // Because provider detection wildcard-matches any `/chat/completions` host, the
@@ -123,4 +130,82 @@ function entry(
   originalLength: number,
 ): RedactionEntry {
   return { target, path, category, strategy, originalType: "string", originalLength };
+}
+
+// -------------------------------------------------------- content redaction ---
+
+const REDACTED = "[content redacted]";
+
+/**
+ * Return a copy of an event with all prompt/response CONTENT masked — message
+ * text, tool arguments, thinking, refusals, and raw bodies — for `redact:
+ * 'content'`. Structure and metadata (roles, token counts, timing, provider,
+ * finish reason) are preserved so the dashboard still works, but nothing that
+ * could contain user data reaches the collector or the on-disk log.
+ */
+export function redactContent(event: LLMPeekEvent): LLMPeekEvent {
+  const e = JSON.parse(JSON.stringify(event)) as LLMPeekEvent;
+  switch (e.type) {
+    case "request_started":
+      maskMessages(e.request.messages);
+      if (e.request.input) e.request.input = [];
+      maskRaw(e.request.raw);
+      noteRedacted(e.redaction);
+      break;
+    case "stream_delta":
+      if (e.textDelta) e.textDelta = REDACTED;
+      if (e.thinkingDelta) e.thinkingDelta = REDACTED;
+      if (e.refusalDelta) e.refusalDelta = REDACTED;
+      if (e.toolCallDelta && e.toolCallDelta.argumentsRaw !== undefined) {
+        e.toolCallDelta.argumentsRaw = REDACTED;
+      }
+      maskRaw(e.raw);
+      break;
+    case "response_completed":
+      maskMessages(e.messages);
+      maskRaw(e.raw);
+      noteRedacted(e.redaction);
+      break;
+    case "error":
+      maskMessages(e.partialMessages);
+      maskRaw(e.raw);
+      noteRedacted(e.redaction);
+      break;
+  }
+  return e;
+}
+
+function maskMessages(msgs?: NormalizedMessage[]): void {
+  if (msgs) for (const m of msgs) maskParts(m.content);
+}
+
+function maskParts(parts?: ContentPart[]): void {
+  if (!parts) return;
+  for (const p of parts) {
+    if (p.type === "text" && p.text) p.text = REDACTED;
+    else if (p.type === "refusal") p.refusal = REDACTED;
+    else if (p.type === "thinking") {
+      if (p.text) p.text = REDACTED;
+    } else if (p.type === "tool_use") {
+      if (p.argumentsRaw !== undefined) p.argumentsRaw = REDACTED;
+      if (p.arguments) p.arguments = {};
+    } else if (p.type === "tool_result") {
+      maskParts(p.content);
+    }
+    if (p.raw !== undefined) p.raw = undefined;
+  }
+}
+
+function maskRaw(raw?: RawPayload): void {
+  if (raw && raw.encoding !== "omitted") {
+    raw.body = undefined;
+    raw.encoding = "omitted";
+    raw.omittedReason = "fully_redacted";
+  }
+}
+
+function noteRedacted(info?: RedactionInfo): void {
+  if (!info) return;
+  info.redacted = true;
+  info.entries.push(entry("messages", "/messages", "message_content", "removed", 0));
 }

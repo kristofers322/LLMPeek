@@ -4,15 +4,20 @@
   "private": true,
   "type": "module",
   "workspaces": ["packages/*"],
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "build": "tsc -b && npm run build --workspace @llmpeek/dashboard && npm run build --workspace llmpeek",
     "dev": "LLMPEEK_ROLE=proxy node packages/node/dist/proxy-cli.js",
     "lint": "biome check .",
-    "format": "biome format --write ."
+    "format": "biome format --write .",
+    "typecheck": "tsc -b",
+    "test": "vitest run"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.7"
   }
 }

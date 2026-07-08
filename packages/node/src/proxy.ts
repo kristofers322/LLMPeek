@@ -12,6 +12,7 @@ import { type AddressInfo, type Socket, connect as netConnect } from "node:net";
 import { type SecureContext, createSecureContext } from "node:tls";
 import type {
   ErrorEvent,
+  LLMPeekEvent,
   RawPayload,
   RedactionEntry,
   RedactionInfo,
@@ -24,12 +25,12 @@ import type {
 } from "@llmpeek/schema";
 import { SCHEMA_VERSION } from "@llmpeek/schema";
 import { type CA, certForHost } from "./ca.js";
-import { ship } from "./collector-client.js";
+import { ship as shipRaw } from "./collector-client.js";
 import type { StreamDeltaInfo } from "./decoders/openai.js";
 import { createStreamAggregator, decodeRequest, decodeResponse } from "./decoders/registry.js";
 import { asObject, asString, tryParseJson } from "./json.js";
 import { type ProviderMatch, detectProvider, detectSdk, isLlmHost } from "./providers.js";
-import { redactBody, redactHeaders, redactUrl, scrubText } from "./redact.js";
+import { redactBody, redactContent, redactHeaders, redactUrl, scrubText } from "./redact.js";
 import { SSEParser } from "./sse.js";
 import { VERSION } from "./version.js";
 
@@ -38,6 +39,12 @@ import { VERSION } from "./version.js";
 const MAX_CAPTURE_BYTES = 10 * 1024 * 1024;
 
 const sessionId = randomUUID();
+
+// Content-redaction policy for the proxy (a separate process — env-driven).
+const contentRedaction = process.env.LLMPEEK_REDACT === "content";
+function ship(event: LLMPeekEvent): void {
+  shipRaw(contentRedaction ? redactContent(event) : event);
+}
 
 /** Per-request capture state — a local seq counter, so no global map leaks. */
 interface Capture {
@@ -189,9 +196,13 @@ function handleForward(req: IncomingMessage, res: ServerResponse, url: URL, secu
     : null;
 
   const headers: IncomingHttpHeaders = { ...req.headers };
+  // Must delete, not assign undefined: an undefined header value throws
+  // ERR_HTTP_INVALID_HEADER_VALUE when passed to http(s).request.
+  // biome-ignore lint/performance/noDelete: header removal must delete the key
   delete headers["proxy-connection"];
   // Only strip accept-encoding for CAPTURED traffic (so we can parse an
   // uncompressed body). Uncaptured traffic keeps its encoding — byte-transparent.
+  // biome-ignore lint/performance/noDelete: header removal must delete the key
   if (cap) delete headers["accept-encoding"];
   headers.host = url.host;
 

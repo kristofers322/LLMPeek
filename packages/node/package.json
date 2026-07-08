@@ -32,6 +32,9 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
+      "edge-light": "./dist/noop.js",
+      "worker": "./dist/noop.js",
+      "workerd": "./dist/noop.js",
       "import": "./dist/index.js"
     },
     "./package.json": "./package.json"

@@ -1,10 +1,21 @@
 import { randomUUID } from "node:crypto";
 import { SCHEMA_VERSION } from "@llmpeek/schema";
 import type { LLMPeekEvent, Source } from "@llmpeek/schema";
+import { redactContent } from "./redact.js";
 import { VERSION } from "./version.js";
 
 /** Version stamped onto every event's `source.interceptorVersion`. */
 export const INTERCEPTOR_VERSION = VERSION;
+
+// Content-redaction policy: when on, mask prompt/response CONTENT (not just
+// credentials). Set via configure({ redact: 'content' }) or LLMPEEK_REDACT=content.
+let contentRedaction = process.env.LLMPEEK_REDACT === "content";
+export function setContentRedaction(on: boolean): void {
+  contentRedaction = on;
+}
+export function isContentRedaction(): boolean {
+  return contentRedaction;
+}
 
 export type Sink = (event: LLMPeekEvent) => void;
 
@@ -49,11 +60,12 @@ export function clearEvents(): void {
  * capture, the other sinks, or the host application.
  */
 export function emit(event: LLMPeekEvent): void {
-  buffer.push(event);
+  const out = contentRedaction ? redactContent(event) : event;
+  buffer.push(out);
   if (buffer.length > MAX_BUFFER) buffer.shift();
   for (const sink of sinks) {
     try {
-      sink(event);
+      sink(out);
     } catch {
       // swallow: a bad sink must not affect the app or other sinks
     }
@@ -73,6 +85,13 @@ export function isEnabled(): boolean {
   // The proxy process must never self-install the interceptor — it would capture
   // its own upstream forwarding and loop.
   if (process.env.LLMPEEK_ROLE === "proxy") return false;
+  // Edge/worker runtimes lack node: builtins — never try to install there.
+  if (
+    process.env.NEXT_RUNTIME === "edge" ||
+    typeof (globalThis as { EdgeRuntime?: unknown }).EdgeRuntime !== "undefined"
+  ) {
+    return false;
+  }
   const flag = (process.env.LLMPEEK ?? "").toLowerCase();
   if (flag === "0" || flag === "false" || flag === "off") return false;
   if (flag === "1" || flag === "true" || flag === "on") return true;
@@ -83,6 +102,7 @@ export function isEnabled(): boolean {
     "K_SERVICE",
     "FUNCTIONS_WORKER_RUNTIME",
     "DYNO",
+    "CI",
   ];
   if (deployed.some((m) => process.env[m])) return false;
   return true;

@@ -12,6 +12,12 @@
     "lineWidth": 100
   },
   "files": {
-    "ignore": ["dist", "node_modules", "**/*.tsbuildinfo"]
+    "ignore": [
+      "dist",
+      "node_modules",
+      "**/*.tsbuildinfo",
+      "packages/node/dashboard",
+      "**/pricing.json"
+    ]
   }
 }

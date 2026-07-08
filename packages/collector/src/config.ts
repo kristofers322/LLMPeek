@@ -10,3 +10,12 @@ export function getPort(): number {
 
 /** Directory (relative to the app cwd) for the NDJSON capture log. Gitignored. */
 export const LOG_DIR = ".llmpeek";
+
+/** Rotate the NDJSON log once it exceeds this size. Override LLMPEEK_LOG_MAX_MB. */
+export const LOG_MAX_BYTES = (() => {
+  const mb = Number(process.env.LLMPEEK_LOG_MAX_MB);
+  return (Number.isFinite(mb) && mb > 0 ? mb : 100) * 1024 * 1024;
+})();
+
+/** Number of rotated log generations to keep (events.ndjson.1 … .N). */
+export const LOG_KEEP = 3;

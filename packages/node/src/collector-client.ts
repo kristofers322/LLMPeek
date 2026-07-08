@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { request } from "node:http";
 import { fileURLToPath } from "node:url";
 import { COLLECTOR_HOST, getPort } from "@llmpeek/collector";
+import { SCHEMA_VERSION, isMajorCompatible } from "@llmpeek/schema";
 import type { LLMPeekEvent } from "@llmpeek/schema";
 
 const PORT = getPort();
@@ -9,6 +10,7 @@ let started = false;
 // Only true once we've confirmed OUR collector owns the port — never ship prompt
 // data to some unrelated process that happens to listen there.
 let collectorOk = false;
+let warnedMismatch = false;
 
 /** Resolve true only if OUR collector answers /health (checks the name, not just 200). */
 function healthy(timeoutMs = 400): Promise<boolean> {
@@ -28,7 +30,21 @@ function healthy(timeoutMs = 400): Promise<boolean> {
         });
         res.on("end", () => {
           try {
-            resolve(JSON.parse(body).name === "llmpeek-collector");
+            const h = JSON.parse(body) as { name?: string; schemaVersion?: string };
+            if (h.name !== "llmpeek-collector") return resolve(false);
+            if (
+              typeof h.schemaVersion === "string" &&
+              !isMajorCompatible(h.schemaVersion, SCHEMA_VERSION)
+            ) {
+              if (!warnedMismatch) {
+                warnedMismatch = true;
+                process.stderr.write(
+                  `[llmpeek] the running collector uses schema ${h.schemaVersion}, incompatible with ${SCHEMA_VERSION}. Capture paused — stop the old collector (or restart it) to continue.\n`,
+                );
+              }
+              return resolve(false);
+            }
+            resolve(true);
           } catch {
             resolve(false);
           }
