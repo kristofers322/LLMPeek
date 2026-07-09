@@ -7,9 +7,18 @@ usage, latency, and cost.
 
 Local-first. No account, no cloud, no config. Your prompts never leave your machine.
 
-## Quick start
+## Two ways to use it
 
-Two ways to run it — pick based on what you're observing.
+Both feed the same localhost dashboard — pick whichever matches what you're running.
+
+| | **Import** | **Proxy** |
+| --- | --- | --- |
+| Use when | it's a Node app you can edit | it's Python, Go, curl — any process |
+| Setup | add `import "llmpeek"` | run `npx llmpeek`, then `source .llmpeek/env.sh` |
+| Certificates | none | yes, generated locally and scoped to that shell |
+| Reach | that one Node process | everything in the proxied shell |
+
+## Quick start
 
 ### In a Node app
 
@@ -36,23 +45,20 @@ Start the proxy; nothing needs to be installed into your app:
 npx llmpeek
 ```
 
-It prints a block of environment variables to paste into the shell where your program
-runs:
+It writes a ready-to-source env file and prints the next step. In the shell that runs
+your program:
 
 ```bash
-export HTTPS_PROXY=http://127.0.0.1:4318
-export HTTP_PROXY=http://127.0.0.1:4318
-export SSL_CERT_FILE=<CA path printed by the CLI>
-export REQUESTS_CA_BUNDLE=<same>
-export CURL_CA_BUNDLE=<same>
-export NODE_EXTRA_CA_CERTS=<same>
-export NODE_OPTIONS="--import llmpeek"
+source .llmpeek/env.sh
+python your_app.py            # curl / go / node / … all work the same
 ```
 
-Now anything in that shell that honors proxy env vars — the OpenAI Python SDK,
-`requests`, `httpx`, `curl` — is captured. The proxy only decrypts known LLM hosts;
-all other HTTPS is tunneled through untouched, and the CA it generates is scoped to
-that shell, never added to your system trust store.
+That env file just sets `HTTPS_PROXY`/`HTTP_PROXY` and points the common CA-bundle
+variables (`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`,
+`NODE_EXTRA_CA_CERTS`) at a locally-generated certificate — so anything that honors
+proxy env vars (the OpenAI Python SDK, `requests`, `httpx`, `curl`) is captured. The
+proxy only decrypts known LLM hosts; all other HTTPS is tunneled through untouched, and
+the CA is scoped to that shell, never added to your system trust store.
 
 ## What it captures
 
