@@ -9,7 +9,8 @@ let selectedId = $state<string | null>(null);
 let connected = $state(false);
 // biome-ignore lint/style/useConst: reassigned from Svelte event handlers in markup.
 let activeTab = $state<"overview" | "logs" | "connect">("overview");
-const requestLog = $state<HTMLUListElement>();
+// biome-ignore lint/style/useConst: assigned by Svelte's bind:this directive.
+let requestLog = $state<HTMLUListElement>();
 let copied = $state<string | null>(null);
 let copyTimer: ReturnType<typeof setTimeout> | undefined;
 
