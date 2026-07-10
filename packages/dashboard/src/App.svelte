@@ -8,13 +8,28 @@ const order = $state<string[]>([]);
 let selectedId = $state<string | null>(null);
 let connected = $state(false);
 // biome-ignore lint/style/useConst: reassigned from Svelte event handlers in markup.
-let activeTab = $state<"overview" | "logs">("overview");
+let activeTab = $state<"overview" | "logs" | "connect">("overview");
 let requestLog = $state<HTMLUListElement>();
+let copied = $state<string | null>(null);
+let copyTimer: ReturnType<typeof setTimeout> | undefined;
 
 async function focusNewestLogRequest(requestId: string): Promise<void> {
   await tick();
   if (activeTab !== "logs" || order.at(-1) !== requestId) return;
   requestLog?.querySelector<HTMLButtonElement>("button")?.focus();
+}
+
+function copy(text: string, id: string): void {
+  navigator.clipboard
+    ?.writeText(text)
+    .then(() => {
+      copied = id;
+      clearTimeout(copyTimer);
+      copyTimer = setTimeout(() => {
+        copied = null;
+      }, 1200);
+    })
+    .catch(() => {});
 }
 
 function connect(): void {
@@ -48,6 +63,9 @@ connect();
 
 const rows = $derived([...order].reverse().map((id) => views[id]));
 const selected = $derived(selectedId ? views[selectedId] : undefined);
+// With no captured requests yet, show the Connect onboarding regardless of tab;
+// the first event flips the user straight to their chosen live view.
+const view = $derived(order.length === 0 ? "connect" : activeTab);
 const completedRows = $derived(rows.filter((r) => r.status === "completed"));
 const activeRows = $derived(rows.filter((r) => r.status === "pending" || r.status === "streaming"));
 const errorRows = $derived(rows.filter((r) => r.status === "error"));
@@ -94,8 +112,8 @@ function statusDotClass(status: RequestView["status"]): string {
   return "border-warning/40 bg-warning";
 }
 
-function tabClass(tab: "overview" | "logs"): string {
-  return activeTab === tab
+function tabClass(tab: "overview" | "logs" | "connect"): string {
+  return view === tab
     ? "bg-background text-foreground shadow-sm"
     : "text-muted-foreground hover:text-foreground";
 }
@@ -130,6 +148,13 @@ function tabClass(tab: "overview" | "logs"): string {
       >
         Logs
       </button>
+      <button
+        class={`h-8 rounded-sm px-3 text-sm font-medium transition ${tabClass("connect")}`}
+        type="button"
+        onclick={() => (activeTab = "connect")}
+      >
+        Connect
+      </button>
     </nav>
 
     <span class="ml-auto text-xs text-muted-foreground">
@@ -137,8 +162,92 @@ function tabClass(tab: "overview" | "logs"): string {
     </span>
   </header>
 
+  {#snippet cmd(text: string, id: string)}
+    <div class="flex items-center justify-between gap-3 rounded-md border bg-background px-3 py-2">
+      <code class="min-w-0 truncate font-mono text-sm">{text}</code>
+      <button
+        class="shrink-0 rounded border px-2 py-1 text-[11px] font-medium text-muted-foreground transition hover:bg-accent hover:text-foreground"
+        type="button"
+        onclick={() => copy(text, id)}
+      >
+        {copied === id ? "Copied" : "Copy"}
+      </button>
+    </div>
+  {/snippet}
+
+  {#snippet connectPanel()}
+    <section class="h-full overflow-y-auto p-5">
+      <div class="mx-auto max-w-3xl">
+        <div class="flex items-center gap-3">
+          <h1 class="text-lg font-semibold">Connect your app</h1>
+          <span
+            class="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs text-muted-foreground"
+          >
+            <span class={`h-1.5 w-1.5 rounded-full ${connected ? "bg-success" : "bg-muted-foreground"}`}
+            ></span>
+            {connected ? "listening" : "reconnecting"}
+          </span>
+        </div>
+        <p class="mt-1 text-sm text-muted-foreground">
+          Two ways to capture LLM calls. Pick the one that matches what you're running; both stream here live.
+        </p>
+
+        <div class="mt-5 grid gap-4 md:grid-cols-2">
+          <div class="flex flex-col rounded-md border bg-card p-4">
+            <div class="text-[11px] font-semibold uppercase tracking-wide text-primary">
+              Option 1 · Node app
+            </div>
+            <h2 class="mt-1 text-sm font-semibold">Import it</h2>
+            <p class="mt-1 text-sm text-muted-foreground">
+              For a Node app you can edit. Add one line, as early as possible, before your LLM SDK
+              loads. No certificates, no config.
+            </p>
+            <div class="mt-3">{@render cmd('import "llmpeek";', "import")}</div>
+            <p class="mt-3 text-xs text-muted-foreground">
+              Next.js: import from <code class="font-mono">instrumentation.ts</code> instead (see the README).
+            </p>
+          </div>
+
+          <div class="flex flex-col rounded-md border bg-card p-4">
+            <div class="text-[11px] font-semibold uppercase tracking-wide text-primary">
+              Option 2 · Any language
+            </div>
+            <h2 class="mt-1 text-sm font-semibold">Run the proxy</h2>
+            <p class="mt-1 text-sm text-muted-foreground">
+              Python, curl, Go, Ruby, anything. Start the proxy, then source the env file in the shell
+              that runs your app.
+            </p>
+            <div class="mt-3 space-y-2">
+              <div class="flex items-start gap-2">
+                <span
+                  class="mt-2 grid h-4 w-4 shrink-0 place-items-center rounded-full border text-[10px] text-muted-foreground"
+                >1</span>
+                <div class="min-w-0 flex-1">{@render cmd("npx llmpeek", "npx")}</div>
+              </div>
+              <div class="flex items-start gap-2">
+                <span
+                  class="mt-2 grid h-4 w-4 shrink-0 place-items-center rounded-full border text-[10px] text-muted-foreground"
+                >2</span>
+                <div class="min-w-0 flex-1">{@render cmd("source .llmpeek/env.sh", "source")}</div>
+              </div>
+            </div>
+            <p class="mt-3 text-xs text-muted-foreground">
+              Only known LLM hosts are decrypted; all other traffic is tunneled through untouched.
+            </p>
+          </div>
+        </div>
+
+        <p class="mt-5 text-xs text-muted-foreground">
+          Local-only: nothing leaves your machine. Capture is off in production and CI by default.
+        </p>
+      </div>
+    </section>
+  {/snippet}
+
   <main class="min-h-0 flex-1">
-    {#if activeTab === "overview"}
+    {#if view === "connect"}
+      {@render connectPanel()}
+    {:else if view === "overview"}
       <section class="grid h-full grid-rows-[auto_1fr] gap-5 overflow-y-auto p-5">
         <div class="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
           <div class="rounded-md border bg-card p-4">

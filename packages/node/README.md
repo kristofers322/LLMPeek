@@ -35,9 +35,17 @@ To capture LLM calls from Python, `curl`, or anything that honors proxy env vars
 npx llmpeek
 ```
 
-It prints an env block to paste into any shell. Everything you launch in that shell
-is captured — cross-language. Only known LLM hosts are decrypted (via a local CA);
-all other HTTPS is tunneled through untouched.
+It writes a ready-to-source `.llmpeek/env.sh` and prints the next step. In the shell
+that runs your app:
+
+```bash
+source .llmpeek/env.sh
+python your_app.py            # curl / go / node / … all work the same
+```
+
+Everything you launch in that shell is captured — cross-language. Only known LLM hosts
+are decrypted (via a local CA scoped to that shell); all other HTTPS is tunneled through
+untouched.
 
 ## Next.js
 
