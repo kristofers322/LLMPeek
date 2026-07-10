@@ -179,7 +179,7 @@ function tabClass(tab: "overview" | "logs" | "connect"): string {
           </span>
         </div>
         <p class="mt-1 text-sm text-muted-foreground">
-          Two ways to capture LLM calls — pick whichever matches what you're running. Both stream here live.
+          Two ways to capture LLM calls. Pick the one that matches what you're running; both stream here live.
         </p>
 
         <div class="mt-5 grid gap-4 md:grid-cols-2">
@@ -189,12 +189,12 @@ function tabClass(tab: "overview" | "logs" | "connect"): string {
             </div>
             <h2 class="mt-1 text-sm font-semibold">Import it</h2>
             <p class="mt-1 text-sm text-muted-foreground">
-              For a Node app you can edit. Add one line, as early as possible — before your LLM SDK
+              For a Node app you can edit. Add one line, as early as possible, before your LLM SDK
               loads. No certificates, no config.
             </p>
             <div class="mt-3">{@render cmd('import "llmpeek";', "import")}</div>
             <p class="mt-3 text-xs text-muted-foreground">
-              Next.js: import from <code class="font-mono">instrumentation.ts</code> instead — see the README.
+              Next.js: import from <code class="font-mono">instrumentation.ts</code> instead (see the README).
             </p>
           </div>
 
@@ -204,7 +204,7 @@ function tabClass(tab: "overview" | "logs" | "connect"): string {
             </div>
             <h2 class="mt-1 text-sm font-semibold">Run the proxy</h2>
             <p class="mt-1 text-sm text-muted-foreground">
-              Python, curl, Go, Ruby — anything. Start the proxy, then source the env file in the shell
+              Python, curl, Go, Ruby, anything. Start the proxy, then source the env file in the shell
               that runs your app.
             </p>
             <div class="mt-3 space-y-2">
@@ -228,7 +228,7 @@ function tabClass(tab: "overview" | "logs" | "connect"): string {
         </div>
 
         <p class="mt-5 text-xs text-muted-foreground">
-          Local-only — nothing leaves your machine. Capture is off in production and CI by default.
+          Local-only: nothing leaves your machine. Capture is off in production and CI by default.
         </p>
       </div>
     </section>

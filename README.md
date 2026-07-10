@@ -1,108 +1,94 @@
 # LLMPeek
 
-See every LLM API call your app makes. One import — or a local proxy — and every
-request to OpenAI, Anthropic, or any OpenAI-compatible provider shows up live in a
-dashboard on localhost: full prompts, tool calls, streaming as it happens, token
-usage, latency, and cost.
+[![CI](https://github.com/kristofers322/LLMPeek/actions/workflows/ci.yml/badge.svg)](https://github.com/kristofers322/LLMPeek/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D18.19-brightgreen)](package.json)
 
-Local-first. No account, no cloud, no config. Your prompts never leave your machine.
+See every LLM call your app makes, live. Add one import to a Node app, or run a
+local proxy for anything else, and every request to OpenAI, Anthropic, or any
+OpenAI-compatible API shows up in a dashboard on localhost: prompts, tool calls,
+streaming output, tokens, latency and cost.
 
-## Two ways to use it
+No account, no cloud, no config. Nothing leaves your machine.
 
-Both feed the same localhost dashboard — pick whichever matches what you're running.
-
-| | **Import** | **Proxy** |
-| --- | --- | --- |
-| Use when | it's a Node app you can edit | it's Python, Go, curl — any process |
-| Setup | add `import "llmpeek"` | run `npx llmpeek`, then `source .llmpeek/env.sh` |
-| Certificates | none | yes, generated locally and scoped to that shell |
-| Reach | that one Node process | everything in the proxied shell |
+<p align="center">
+  <img src="docs/demo.gif" width="820" alt="LLMPeek dashboard streaming a Claude response live">
+</p>
 
 ## Quick start
 
-### In a Node app
+**In a Node app**, install once and import once, before your LLM SDK loads:
 
 ```bash
 npm install --save-dev llmpeek
 ```
 
-Import it once, as early as possible, before your LLM SDK is initialized:
-
 ```js
 import "llmpeek";
 ```
 
-Open http://127.0.0.1:4319. That's the whole setup — the dashboard and its collector
-spin up on their own the first time a call is captured.
+Run your app and open http://127.0.0.1:4319. The dashboard starts itself on the
+first captured call. Using Next.js? See [below](#nextjs).
 
-(Next.js needs the instrumentation hook instead of a bare import — see [Next.js](#nextjs).)
-
-### Any other process — Python, Go, curl, …
-
-Start the proxy; nothing needs to be installed into your app:
+**For anything else** (Python, Go, curl, whatever), start the proxy:
 
 ```bash
 npx llmpeek
 ```
 
-It writes a ready-to-source env file and prints the next step. In the shell that runs
-your program:
+Then, in the shell your program runs in:
 
 ```bash
 source .llmpeek/env.sh
-python your_app.py            # curl / go / node / … all work the same
+python your_app.py
 ```
 
-That env file just sets `HTTPS_PROXY`/`HTTP_PROXY` and points the common CA-bundle
-variables (`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`,
-`NODE_EXTRA_CA_CERTS`) at a locally-generated certificate — so anything that honors
-proxy env vars (the OpenAI Python SDK, `requests`, `httpx`, `curl`) is captured. The
-proxy only decrypts known LLM hosts; all other HTTPS is tunneled through untouched, and
-the CA is scoped to that shell, never added to your system trust store.
+The proxy decrypts traffic to known LLM hosts only, using a locally generated CA
+that never touches your system trust store. All other HTTPS is tunneled through
+untouched.
 
-## What it captures
+## What you get
 
-Per call: the request (model, params, system + messages, tools), the response (text,
-tool calls, refusals, finish reason), streaming deltas as they arrive, token usage
-(including cached and reasoning tokens), latency, and estimated cost.
+Every request in one place: the full prompt, the response as it streams, tool
+calls with their arguments, finish reasons, token usage (cached and reasoning
+tokens included), latency and estimated cost.
 
-Decoded end-to-end:
+<img src="docs/overview.png" alt="Overview tab with request stats, recent activity and session cost">
 
-- **OpenAI** — chat completions and embeddings, streaming and non-streaming
-- **Anthropic** — Messages API, streaming, extended thinking, cache usage
-- **OpenAI-compatible** — Groq, OpenRouter, Together, DeepSeek, Perplexity, x.ai,
-  Fireworks, Mistral, Azure OpenAI, plus self-hosted Ollama / vLLM — anything speaking
-  the OpenAI `/chat/completions` or `/embeddings` shape
+<img src="docs/logs.png" alt="Request detail showing the prompt, a tool call in the response, tokens, TTFT and cost">
 
-Cost comes from a vendored LiteLLM price snapshot; unknown models show no cost rather
-than a wrong one. Embedding calls record dimensions and token counts, not the vectors.
+## Supported providers
 
-Not yet decoded: Google Gemini's native API and Cohere's native API — those calls aren't
-captured yet.
+- **OpenAI**: chat completions and embeddings, streaming included
+- **Anthropic**: the Messages API, streaming, extended thinking, prompt caching
+- **OpenAI-compatible**: Groq, OpenRouter, Together, Mistral, DeepSeek,
+  Perplexity, x.ai, Fireworks, Azure OpenAI, and self-hosted Ollama or vLLM
+
+Costs come from a bundled LiteLLM pricing snapshot; unknown models show no cost
+rather than a wrong one. The native Gemini and Cohere APIs are not decoded yet.
 
 ## Configuration
 
-Everything works with zero config. To change something, use env vars or the
-programmatic API.
+Everything works with zero config. When you need to change something:
 
-| Env var | Default | Purpose |
+| Env var | Default | What it does |
 | --- | --- | --- |
-| `LLMPEEK` | on in dev | `1` / `0` to force capture on or off |
-| `LLMPEEK_REDACT` | `credentials` | `content` also masks prompts, responses, and tool args |
-| `LLMPEEK_PORT` | `4319` | Dashboard + collector port |
-| `LLMPEEK_PROXY_PORT` | `4318` | Proxy listen port |
-| `LLMPEEK_HOSTS` | — | Comma-separated extra hosts the proxy should intercept |
-| `LLMPEEK_LOG_MAX_MB` | `100` | Rotate the event log past this size |
+| `LLMPEEK` | on in dev | `1` or `0` forces capture on or off |
+| `LLMPEEK_REDACT` | `credentials` | `content` also masks prompts, responses and tool args |
+| `LLMPEEK_PORT` | `4319` | dashboard and collector port |
+| `LLMPEEK_PROXY_PORT` | `4318` | proxy port |
+| `LLMPEEK_HOSTS` | none | extra hosts for the proxy to intercept, comma-separated |
+| `LLMPEEK_LOG_MAX_MB` | `100` | rotate the event log past this size |
 
-From code, in the in-process Node mode:
+Or from code:
 
 ```js
 import { configure } from "llmpeek";
 
 configure({
-  redact: "content",            // mask prompt/response text, keep tokens + cost
-  enabled: true,                // force on/off, overriding the dev heuristic
-  sink: (event) => { /* … */ }, // also receive every captured event
+  redact: "content",   // mask prompt and response text, keep tokens and cost
+  enabled: true,       // force capture on or off
+  sink: (event) => {}, // receive every captured event yourself
 });
 ```
 
@@ -110,7 +96,7 @@ configure({
 
 ### Next.js
 
-A bare `import "llmpeek"` won't reliably load before your SDK, and must never run in
+A bare import does not reliably load before your SDK, and it must never run on
 the Edge runtime. Use the instrumentation hook:
 
 ```js
@@ -125,57 +111,39 @@ export async function register() {
 ```js
 // next.config.js
 module.exports = {
-  serverExternalPackages: ["llmpeek"], // Next 15+ (13–14: experimental.serverComponentsExternalPackages)
+  serverExternalPackages: ["llmpeek"], // Next 15+. On 13-14 use experimental.serverComponentsExternalPackages
 };
 ```
 
-## Privacy & safety
+## Privacy
 
-LLMPeek is meant to be safe to leave on while you develop:
-
-- **Local only.** The collector binds to `127.0.0.1` and is never exposed off your
-  machine. Nothing is uploaded anywhere.
-- **Dev only by default.** Capture refuses to start under `NODE_ENV=production`, in CI,
-  and on serverless runtimes (Vercel, Lambda, Cloud Run, …) — set `LLMPEEK=1` to override
-  any of those. On the Edge runtime it's always off, since Edge lacks the Node built-ins
-  it needs.
-- **Your data stays put.** Captured events — which include prompt and response text —
-  are appended to `./.llmpeek/events.ndjson`. Add `.llmpeek/` to your `.gitignore`. Set
-  `LLMPEEK_REDACT=content` to keep only structure, tokens, and cost. API keys are always
-  stripped from captured data.
-
-## How it works
-
-LLMPeek watches the wire, not your SDK. In-process it wraps `fetch` / `http.request` /
-XHR with an observe-only interceptor that never modifies traffic; as a proxy it MITMs
-only known LLM hosts using a locally-generated CA. Either way it normalizes the handful
-of provider wire formats into one event schema — so it captures every SDK and language
-for free instead of hooking each one.
+- The dashboard and collector bind to `127.0.0.1`. Nothing is uploaded, ever.
+- Capture is off by default in production, CI and serverless environments.
+- Captured events, including prompt text, are logged to `./.llmpeek/events.ndjson`,
+  so add `.llmpeek/` to your `.gitignore`. Set `LLMPEEK_REDACT=content` to keep
+  structure and stats but mask all text. API keys are always stripped.
 
 ## Development
 
-An npm-workspaces monorepo:
+npm workspaces monorepo:
 
 | Package | Role |
 | --- | --- |
-| `packages/schema` | Canonical event contract — TS types + JSON Schema |
-| `packages/node` | The published `llmpeek` package (interceptor + proxy) |
-| `packages/collector` | Local server: HTTP + WebSocket + NDJSON log + cost enrichment |
-| `packages/dashboard` | Svelte dashboard, served on localhost |
-
-At publish time the collector and built dashboard are bundled into `llmpeek`, so
-installing stays a single package.
+| `packages/schema` | event contract, TS types plus JSON Schema |
+| `packages/node` | the published `llmpeek` package (interceptor, proxy, CLI) |
+| `packages/collector` | local server: HTTP, WebSocket, NDJSON log, cost enrichment |
+| `packages/dashboard` | Svelte dashboard served on localhost |
 
 ```bash
 npm install
-npm run build   # tsc -b, bundle node, build dashboard
-npm run lint    # biome
-npm test        # vitest
+npm run build
+npm test
 ```
 
-Requires Node >= 18.19.
+The collector and built dashboard are bundled into `llmpeek` at publish time, so
+installing stays a single package. Node 18.19 or newer.
 
 ## License
 
-MIT © 2026 [Kristofers Gulbis](https://github.com/kristofers322), co-authored with
-[Mason Salter](https://github.com/masonsalter). See [LICENSE](LICENSE).
+MIT. Built by [Kristofers Gulbis](https://github.com/kristofers322) and
+[Mason Salter](https://github.com/masonsalter).

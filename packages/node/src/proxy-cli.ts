@@ -19,7 +19,7 @@ const proxyUrl = `http://127.0.0.1:${proxy.port}`;
 // Write a ready-to-source env file so capturing another process is one command
 // (`source .llmpeek/env.sh`) instead of pasting a wall of exports.
 const envFile = join(process.cwd(), ".llmpeek", "env.sh");
-const envBody = `# LLMPeek — capture LLM API calls made from this shell.
+const envBody = `# LLMPeek: capture LLM API calls made from this shell.
 # Usage:  source .llmpeek/env.sh    (then run your program in the SAME shell)
 export HTTPS_PROXY=${proxyUrl}
 export HTTP_PROXY=${proxyUrl}
@@ -49,7 +49,7 @@ process.stdout.write(`
     python your_app.py            # curl / node / go / … all work the same
 
   ── Already in a Node app? ─────────────────────────────────────────────────
-  You don't need the proxy — add one line, as early as possible:
+  You don't need the proxy. Add one line, as early as possible:
 
     import "llmpeek";
 
