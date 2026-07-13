@@ -1,5 +1,6 @@
 <script lang="ts">
 import type { ContentPart, LLMPeekEvent, NormalizedMessage } from "@llmpeek/schema";
+import { tick } from "svelte";
 import { type RequestView, applyEvent, emptyView } from "./lib/fold";
 
 const views = $state<Record<string, RequestView>>({});
@@ -8,8 +9,17 @@ let selectedId = $state<string | null>(null);
 let connected = $state(false);
 // biome-ignore lint/style/useConst: reassigned from Svelte event handlers in markup.
 let activeTab = $state<"overview" | "logs" | "connect">("overview");
+// biome-ignore lint/style/useConst: assigned by Svelte's bind:this directive.
+let requestLog = $state<HTMLUListElement>();
 let copied = $state<string | null>(null);
 let copyTimer: ReturnType<typeof setTimeout> | undefined;
+
+async function focusNewestLogRequest(requestId: string): Promise<void> {
+  await tick();
+  if (activeTab !== "logs" || order.at(-1) !== requestId) return;
+  requestLog?.querySelector<HTMLButtonElement>("button")?.focus();
+}
+
 function copy(text: string, id: string): void {
   navigator.clipboard
     ?.writeText(text)
@@ -44,7 +54,8 @@ function connect(): void {
     if (!views[ev.requestId]) {
       views[ev.requestId] = emptyView(ev.requestId);
       order.push(ev.requestId);
-      if (!selectedId) selectedId = ev.requestId;
+      selectedId = ev.requestId;
+      void focusNewestLogRequest(ev.requestId);
     }
     applyEvent(views[ev.requestId], ev);
   };
@@ -341,7 +352,7 @@ function tabClass(tab: "overview" | "logs" | "connect"): string {
             <p class="mt-1 text-xs text-muted-foreground">Live provider calls and stream events</p>
           </div>
 
-          <ul class="space-y-1 p-2">
+          <ul class="space-y-1 p-2" bind:this={requestLog}>
             {#each rows as r (r.requestId)}
               <li>
                 <button
