@@ -13,11 +13,37 @@ let activeTab = $state<"overview" | "logs" | "connect">("overview");
 let requestLog = $state<HTMLUListElement>();
 let copied = $state<string | null>(null);
 let copyTimer: ReturnType<typeof setTimeout> | undefined;
+// When following, the newest request auto-selects; a manual selection pins the
+// view so an incoming request can't yank the detail pane out from under you.
+let followLatest = $state(true);
+// biome-ignore lint/style/useConst: two-way bound via bind:value in markup.
+let query = $state("");
+// biome-ignore lint/style/useConst: reassigned from Svelte event handlers in markup.
+let statusFilter = $state<"all" | "streaming" | "completed" | "error">("all");
+const STATUS_FILTERS = [
+  { key: "all", label: "All" },
+  { key: "streaming", label: "Live" },
+  { key: "completed", label: "Done" },
+  { key: "error", label: "Error" },
+] as const;
 
 async function focusNewestLogRequest(requestId: string): Promise<void> {
   await tick();
   if (activeTab !== "logs" || order.at(-1) !== requestId) return;
+  // Never steal focus from the filter box while the user is typing.
+  const active = document.activeElement;
+  if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")) return;
   requestLog?.querySelector<HTMLButtonElement>("button")?.focus();
+}
+
+function selectRequest(id: string): void {
+  selectedId = id;
+  followLatest = false; // manual pick pins the view
+}
+
+function toggleFollow(): void {
+  followLatest = !followLatest;
+  if (followLatest) selectedId = order.at(-1) ?? selectedId;
 }
 
 function copy(text: string, id: string): void {
@@ -54,8 +80,10 @@ function connect(): void {
     if (!views[ev.requestId]) {
       views[ev.requestId] = emptyView(ev.requestId);
       order.push(ev.requestId);
-      selectedId = ev.requestId;
-      void focusNewestLogRequest(ev.requestId);
+      if (followLatest || !selectedId) {
+        selectedId = ev.requestId;
+        void focusNewestLogRequest(ev.requestId);
+      }
     }
     applyEvent(views[ev.requestId], ev);
   };
@@ -77,6 +105,32 @@ const averageLatency = $derived.by(() => {
 });
 const totalCost = $derived(rows.reduce((sum, r) => sum + (r.cost?.totalCost ?? 0), 0));
 const latestRows = $derived(rows.slice(0, 6));
+const filteredRows = $derived(rows.filter((r) => matchesStatus(r) && matchesQuery(r)));
+
+function matchesStatus(r: RequestView): boolean {
+  if (statusFilter === "all") return true;
+  if (statusFilter === "streaming") return r.status === "streaming" || r.status === "pending";
+  return r.status === statusFilter;
+}
+
+function matchesQuery(r: RequestView): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const fields = [
+    r.model,
+    r.provider,
+    r.operation,
+    r.path,
+    r.finishReason,
+    r.errorMessage,
+    r.streamingText,
+  ];
+  if (fields.some((s) => s?.toLowerCase().includes(q))) return true;
+  for (const m of [...r.promptMessages, ...r.responseMessages]) {
+    for (const p of m.content ?? []) if (partText(p).toLowerCase().includes(q)) return true;
+  }
+  return false;
+}
 
 const tokens = (v: RequestView): string =>
   v.usage ? `${v.usage.promptTokens ?? "?"} / ${v.usage.completionTokens ?? "?"}` : "-";
@@ -93,7 +147,18 @@ function partText(p: ContentPart): string {
   if (p.type === "image" || p.type === "audio" || p.type === "file") return `[${p.type}]`;
   return `[${p.type}]`;
 }
-const msgText = (m: NormalizedMessage): string => (m.content ?? []).map(partText).join("\n");
+function prettyArgs(p: ContentPart): string {
+  if (p.type !== "tool_use") return "";
+  if (p.arguments) return JSON.stringify(p.arguments, null, 2);
+  if (p.argumentsRaw) {
+    try {
+      return JSON.stringify(JSON.parse(p.argumentsRaw), null, 2);
+    } catch {
+      return p.argumentsRaw; // partial/streaming JSON — show as-is
+    }
+  }
+  return "";
+}
 
 function badgeClass(status: RequestView["status"]): string {
   if (status === "completed") return "border-success/30 bg-success/10 text-success";
@@ -247,6 +312,61 @@ function tabClass(tab: "overview" | "logs" | "connect"): string {
     </section>
   {/snippet}
 
+  {#snippet partView(p: ContentPart)}
+    {#if p.type === "text"}
+      <pre class="whitespace-pre-wrap break-words font-mono text-sm leading-6">{p.text ?? ""}</pre>
+    {:else if p.type === "thinking"}
+      <div class="rounded border border-border/60 bg-muted/40 p-2">
+        <div class="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Reasoning</div>
+        <pre
+          class="mt-1 whitespace-pre-wrap break-words font-mono text-xs leading-6 text-muted-foreground">{p.redactedThinking ? "[withheld]" : (p.text ?? "")}</pre>
+      </div>
+    {:else if p.type === "tool_use"}
+      <div class="rounded border border-primary/25 bg-primary/5 p-2">
+        <div class="font-mono text-[11px] font-semibold text-primary">tool call · {p.name}</div>
+        <pre class="mt-1 whitespace-pre-wrap break-words font-mono text-xs leading-6">{prettyArgs(p)}</pre>
+      </div>
+    {:else if p.type === "tool_result"}
+      <div
+        class={`rounded border p-2 ${p.isError ? "border-destructive/30 bg-destructive/10" : "border-border/60 bg-muted/40"}`}
+      >
+        <div
+          class={`text-[11px] font-semibold ${p.isError ? "text-destructive" : "text-muted-foreground"}`}
+        >
+          tool result{p.isError ? " · error" : ""}
+        </div>
+        <div class="mt-1 space-y-1">
+          {#each p.content ?? [] as c}
+            {@render partView(c)}
+          {/each}
+          {#if !(p.content ?? []).length}
+            <div class="text-xs text-muted-foreground">(no content)</div>
+          {/if}
+        </div>
+      </div>
+    {:else if p.type === "refusal"}
+      <pre
+        class="whitespace-pre-wrap break-words rounded border border-destructive/30 bg-destructive/10 p-2 font-mono text-sm leading-6 text-destructive">refusal: {p.refusal}</pre>
+    {:else if p.type === "image" || p.type === "audio" || p.type === "file"}
+      <span class="inline-block rounded border bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+        [{p.type}{p.mimeType ? ` ${p.mimeType}` : ""}]
+      </span>
+    {:else}
+      <span class="text-xs text-muted-foreground">[{p.type}]</span>
+    {/if}
+  {/snippet}
+
+  {#snippet messageBody(m: NormalizedMessage)}
+    <div class="mt-2 space-y-2">
+      {#each m.content ?? [] as p}
+        {@render partView(p)}
+      {/each}
+      {#if !(m.content ?? []).length}
+        <div class="text-sm text-muted-foreground">-</div>
+      {/if}
+    </div>
+  {/snippet}
+
   <main class="min-h-0 flex-1">
     {#if view === "connect"}
       {@render connectPanel()}
@@ -294,7 +414,7 @@ function tabClass(tab: "overview" | "logs" | "connect"): string {
                   class="grid w-full grid-cols-[minmax(0,1fr)_auto] gap-3 px-4 py-3 text-left transition hover:bg-accent/40"
                   type="button"
                   onclick={() => {
-                    selectedId = r.requestId;
+                    selectRequest(r.requestId);
                     activeTab = "logs";
                   }}
                 >
@@ -350,17 +470,43 @@ function tabClass(tab: "overview" | "logs" | "connect"): string {
       <section class="grid h-full min-h-0 grid-cols-[340px_1fr]">
         <aside class="min-h-0 overflow-y-auto border-r bg-card/60">
           <div class="sticky top-0 z-10 border-b bg-card/95 px-4 py-3 backdrop-blur">
-            <h2 class="text-sm font-semibold">Request Logs</h2>
-            <p class="mt-1 text-xs text-muted-foreground">Live provider calls and stream events</p>
+            <div class="flex items-center justify-between gap-2">
+              <h2 class="text-sm font-semibold">Request Logs</h2>
+              <button
+                class={`rounded border px-2 py-0.5 text-[11px] font-medium transition ${followLatest ? "border-primary/40 bg-primary/10 text-primary" : "text-muted-foreground hover:text-foreground"}`}
+                type="button"
+                title="Auto-select each new request as it arrives"
+                onclick={toggleFollow}
+              >
+                {followLatest ? "Following" : "Follow latest"}
+              </button>
+            </div>
+            <input
+              class="mt-2 w-full rounded-md border bg-background px-2.5 py-1.5 text-sm outline-none transition focus:border-primary/50"
+              type="text"
+              placeholder="Filter by model, path, or text..."
+              bind:value={query}
+            />
+            <div class="mt-2 flex gap-1">
+              {#each STATUS_FILTERS as f}
+                <button
+                  class={`rounded px-2 py-0.5 text-[11px] font-medium transition ${statusFilter === f.key ? "bg-primary/15 text-primary" : "text-muted-foreground hover:text-foreground"}`}
+                  type="button"
+                  onclick={() => (statusFilter = f.key)}
+                >
+                  {f.label}
+                </button>
+              {/each}
+            </div>
           </div>
 
           <ul class="space-y-1 p-2" bind:this={requestLog}>
-            {#each rows as r (r.requestId)}
+            {#each filteredRows as r (r.requestId)}
               <li>
                 <button
                   class={`w-full rounded-md border px-3 py-2.5 text-left transition ${rowClass(r.requestId)}`}
                   type="button"
-                  onclick={() => (selectedId = r.requestId)}
+                  onclick={() => selectRequest(r.requestId)}
                 >
                   <span class="flex items-center gap-2">
                     <span
@@ -389,6 +535,8 @@ function tabClass(tab: "overview" | "logs" | "connect"): string {
             {/each}
             {#if rows.length === 0}
               <li class="px-3 py-6 text-sm text-muted-foreground">Waiting for LLM calls...</li>
+            {:else if filteredRows.length === 0}
+              <li class="px-3 py-6 text-sm text-muted-foreground">No requests match your filter.</li>
             {/if}
           </ul>
         </aside>
@@ -450,7 +598,7 @@ function tabClass(tab: "overview" | "logs" | "connect"): string {
                         <span class="text-[11px] font-semibold uppercase tracking-normal text-primary">
                           {m.role}
                         </span>
-                        <pre class="mt-2 whitespace-pre-wrap break-words font-mono text-sm leading-6">{msgText(m)}</pre>
+                        {@render messageBody(m)}
                       </div>
                     {/each}
                     {#if selected.promptMessages.length === 0}
@@ -472,7 +620,7 @@ function tabClass(tab: "overview" | "logs" | "connect"): string {
                           <span class="text-[11px] font-semibold uppercase tracking-normal text-primary">
                             {m.role}
                           </span>
-                          <pre class="mt-2 whitespace-pre-wrap break-words font-mono text-sm leading-6">{msgText(m)}</pre>
+                          {@render messageBody(m)}
                         </div>
                       {/each}
                     </div>
