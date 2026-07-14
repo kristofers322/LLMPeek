@@ -59,7 +59,7 @@ tokens included), latency and estimated cost.
 
 ## Supported providers
 
-- **OpenAI**: chat completions and embeddings, streaming included
+- **OpenAI**: chat completions, the Responses API (reasoning, tool calls, streaming), and embeddings
 - **Anthropic**: the Messages API, streaming, extended thinking, prompt caching
 - **OpenAI-compatible**: Groq, OpenRouter, Together, Mistral, DeepSeek,
   Perplexity, x.ai, Fireworks, Azure OpenAI, and self-hosted Ollama or vLLM

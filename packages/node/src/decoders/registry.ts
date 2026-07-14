@@ -14,6 +14,11 @@ import {
   decodeEmbeddingRequest,
   decodeEmbeddingResponse,
 } from "./openai.js";
+import {
+  ResponsesStreamAggregator,
+  decodeResponsesRequest,
+  decodeResponsesResponse,
+} from "./responses.js";
 
 /** Provider-agnostic streaming aggregator: feed decoded frames (with the SSE
  *  `event` name for event-typed streams like Anthropic), then finalize. */
@@ -25,6 +30,7 @@ export interface StreamAggregator {
 /** Normalize a request body by wire format. */
 export function decodeRequest(match: ProviderMatch, body: unknown): DecodedRequest {
   if (match.wireFormat === "anthropic_messages") return decodeMessagesRequest(body);
+  if (match.wireFormat === "openai_responses") return decodeResponsesRequest(body);
   if (match.operation === "embedding") return decodeEmbeddingRequest(body);
   return decodeChatRequest(body);
 }
@@ -32,6 +38,7 @@ export function decodeRequest(match: ProviderMatch, body: unknown): DecodedReque
 /** Normalize a non-streaming response body by wire format. */
 export function decodeResponse(match: ProviderMatch, body: unknown): DecodedResponse {
   if (match.wireFormat === "anthropic_messages") return decodeMessagesResponse(body);
+  if (match.wireFormat === "openai_responses") return decodeResponsesResponse(body);
   if (match.operation === "embedding") return decodeEmbeddingResponse(body);
   return decodeChatResponse(body);
 }
@@ -39,5 +46,6 @@ export function decodeResponse(match: ProviderMatch, body: unknown): DecodedResp
 /** The streaming aggregator for a wire format. */
 export function createStreamAggregator(match: ProviderMatch): StreamAggregator {
   if (match.wireFormat === "anthropic_messages") return new AnthropicStreamAggregator();
+  if (match.wireFormat === "openai_responses") return new ResponsesStreamAggregator();
   return new OpenAIStreamAggregator();
 }

@@ -85,6 +85,8 @@ const money = (n: number): string => (n > 0 ? `$${n.toFixed(5)}` : "-");
 
 function partText(p: ContentPart): string {
   if (p.type === "text") return p.text ?? "";
+  if (p.type === "thinking")
+    return p.redactedThinking ? "[reasoning withheld]" : `reasoning: ${p.text ?? ""}`;
   if (p.type === "tool_use") return `tool ${p.name}(${p.argumentsRaw ?? ""})`;
   if (p.type === "tool_result") return `tool_result ${p.toolCallId}`;
   if (p.type === "refusal") return `refusal ${p.refusal}`;

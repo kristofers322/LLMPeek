@@ -10,6 +10,11 @@ describe("detectProvider", () => {
       "embedding",
     );
   });
+  it("detects the OpenAI Responses API", () => {
+    expect(detectProvider(new URL("https://api.openai.com/v1/responses"), "POST")?.wireFormat).toBe(
+      "openai_responses",
+    );
+  });
   it("detects Anthropic messages", () => {
     expect(
       detectProvider(new URL("https://api.anthropic.com/v1/messages"), "POST")?.wireFormat,
