@@ -48,7 +48,8 @@ export async function ensureCA(): Promise<CA> {
   cert.sign(keys.privateKey, forge.md.sha256.create());
 
   const certPem = forge.pki.certificateToPem(cert);
-  await mkdir(CA_DIR, { recursive: true });
+  // Owner-only: the CA private key lives here (and the dir gates traversal).
+  await mkdir(CA_DIR, { recursive: true, mode: 0o700 });
   await writeFile(CA_CERT_PATH, certPem);
   await writeFile(CA_KEY_PATH, forge.pki.privateKeyToPem(keys.privateKey), { mode: 0o600 });
   return { certPem, cert, key: keys.privateKey };

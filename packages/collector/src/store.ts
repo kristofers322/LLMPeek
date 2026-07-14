@@ -1,4 +1,4 @@
-import { appendFile, mkdir, rename, stat } from "node:fs/promises";
+import { appendFile, chmod, mkdir, rename, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { LLMPeekEvent } from "@llmpeek/schema";
 import { LOG_DIR, LOG_KEEP, LOG_MAX_BYTES } from "./config.js";
@@ -16,11 +16,15 @@ export class EventStore {
 
   constructor(baseDir: string = join(process.cwd(), LOG_DIR)) {
     this.logPath = join(baseDir, "events.ndjson");
-    // Seed the byte counter from any existing log so rotation survives restarts.
-    this.ready = mkdir(baseDir, { recursive: true })
+    // The log holds captured prompt/response text, so keep the dir and file
+    // owner-only (0700/0600). chmod enforces it even on a pre-existing dir/log.
+    // Also seed the byte counter from any existing log so rotation survives restarts.
+    this.ready = mkdir(baseDir, { recursive: true, mode: 0o700 })
+      .then(() => chmod(baseDir, 0o700).catch(() => {}))
       .then(() => stat(this.logPath))
       .then((s) => {
         this.bytes = s.size;
+        return chmod(this.logPath, 0o600).catch(() => {});
       })
       .catch(() => {});
   }
@@ -33,7 +37,7 @@ export class EventStore {
     const len = Buffer.byteLength(line);
     if (this.bytes + len > LOG_MAX_BYTES) await this.rotate();
     this.bytes += len;
-    await appendFile(this.logPath, line).catch(() => {});
+    await appendFile(this.logPath, line, { mode: 0o600 }).catch(() => {});
   }
 
   /** events.ndjson.(N-1) -> .N, … , events.ndjson -> .1, then start fresh. */

@@ -44,10 +44,16 @@ export function startCollector(): Promise<Collector> {
   };
 
   const server = createServer((req, res) => {
-    void handle(req, res, store, broadcast);
+    void handle(req, res, store, broadcast, port);
   });
   const wss = new WebSocketServer({ server, path: "/stream" });
-  wss.on("connection", (ws) => {
+  wss.on("connection", (ws, req) => {
+    // A cross-origin page can open a WebSocket without CORS, so gate the live
+    // feed on the same Host/Origin check as the HTTP endpoints.
+    if (!isTrustedRequest(req.headers, port)) {
+      ws.close();
+      return;
+    }
     clients.add(ws);
     // Catch a new dashboard up on recent history before live events.
     for (const event of store.backlog()) ws.send(JSON.stringify({ type: "event", event }));
@@ -74,15 +80,59 @@ export function startCollector(): Promise<Collector> {
   });
 }
 
+const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
+
+/** The Host header must be exactly one of our loopback authorities. Blocks DNS
+ *  rebinding, where a page on evil.com resolves its own name to 127.0.0.1. */
+export function isLoopbackAuthority(authority: string | undefined, port: number): boolean {
+  if (!authority) return false;
+  return (
+    authority === `127.0.0.1:${port}` ||
+    authority === `localhost:${port}` ||
+    authority === `[::1]:${port}`
+  );
+}
+
+/** An Origin header, when present, must point at one of our loopback origins. */
+export function isLoopbackOrigin(origin: string | undefined, port: number): boolean {
+  if (!origin) return false;
+  try {
+    const u = new URL(origin);
+    return LOOPBACK_HOSTNAMES.has(u.hostname) && u.port === String(port);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Guard the loopback collector against browser-driven attacks. The collector
+ * serves captured prompt text, so a page in the user's browser must not be able
+ * to read /events or forge /ingest. Host must be our exact loopback authority
+ * (blocks DNS rebinding); any Origin present must also be loopback (blocks a
+ * cross-origin page). Trusted Node clients send Host: 127.0.0.1 and no Origin.
+ */
+export function isTrustedRequest(
+  headers: { host?: string; origin?: string },
+  port: number,
+): boolean {
+  if (!isLoopbackAuthority(headers.host, port)) return false;
+  if (headers.origin !== undefined && !isLoopbackOrigin(headers.origin, port)) return false;
+  return true;
+}
+
 async function handle(
   req: IncomingMessage,
   res: ServerResponse,
   store: EventStore,
   broadcast: (e: LLMPeekEvent) => void,
+  port: number,
 ): Promise<void> {
-  res.setHeader("access-control-allow-origin", "*");
   const url = req.url ?? "/";
 
+  if (!isTrustedRequest(req.headers, port)) {
+    res.writeHead(403).end();
+    return;
+  }
   if (req.method === "OPTIONS") {
     res.writeHead(204).end();
     return;
@@ -182,11 +232,22 @@ async function serveStatic(url: string, res: ServerResponse): Promise<void> {
   }
 }
 
+// Cap the ingest body so a forged or runaway POST can't exhaust collector memory.
+// Comfortably above any real event batch (raw bodies are already capped upstream).
+const MAX_INGEST_BYTES = 64 * 1024 * 1024;
+
 function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     let data = "";
+    let size = 0;
     req.setEncoding("utf8");
-    req.on("data", (chunk) => {
+    req.on("data", (chunk: string) => {
+      size += Buffer.byteLength(chunk);
+      if (size > MAX_INGEST_BYTES) {
+        req.destroy();
+        reject(new Error("ingest body too large"));
+        return;
+      }
       data += chunk;
     });
     req.on("end", () => resolve(data));

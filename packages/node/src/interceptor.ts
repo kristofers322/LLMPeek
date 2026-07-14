@@ -99,7 +99,9 @@ function onRequest(request: Request, requestId: string): void {
       const { headers, entries: hEntries } = redactHeaders(request.headers, "request_headers");
       const redUrl = redactUrl(url);
       const bodyRedaction = redactBody(parsed, "request_body");
-      const decoded = decodeRequest(match, parsed);
+      // Decode from the redacted body so masked secrets never resurface in the
+      // normalized request.messages/params shown in the dashboard.
+      const decoded = decodeRequest(match, bodyRedaction.body);
       const raw: RawPayload = {
         format: match.wireFormat,
         encoding: "json",
@@ -143,6 +145,24 @@ function onRequest(request: Request, requestId: string): void {
 
 // -------------------------------------------------------------- response ---
 
+/**
+ * Whether to read the response as an SSE stream. A request made with stream
+ * intent that FAILS comes back as a non-2xx JSON error (not an event stream), so
+ * stream intent alone must not force the streaming path — otherwise the error is
+ * parsed as zero SSE frames and surfaces as an empty completion instead of an
+ * error event. Route genuine event streams (and ok, non-JSON stream-intent
+ * responses) to the stream path; everything else, including errors, to the
+ * non-stream path which emits a proper ErrorEvent.
+ */
+export function isStreamingResponse(
+  contentType: string,
+  streamRequested: boolean,
+  ok: boolean,
+): boolean {
+  if (contentType.includes("text/event-stream")) return true;
+  return streamRequested && ok && !contentType.includes("application/json");
+}
+
 function onResponse(response: Response, requestId: string, isMockedResponse: boolean): void {
   if (isMockedResponse) return;
   const ctx = contexts.get(requestId);
@@ -150,7 +170,7 @@ function onResponse(response: Response, requestId: string, isMockedResponse: boo
 
   const clone = response.clone();
   const contentType = response.headers.get("content-type") ?? "";
-  const isStream = contentType.includes("text/event-stream") || ctx.streamRequested;
+  const isStream = isStreamingResponse(contentType, ctx.streamRequested, response.ok);
   const { headers: respHeaders, entries: rhEntries } = redactHeaders(
     response.headers,
     "response_headers",
@@ -301,7 +321,8 @@ function finishNonStream(
   const redaction = mergeRedaction([...rhEntries, ...bodyRedaction.entries]);
 
   if (response.ok) {
-    const decoded = decodeResponse(ctx.match, parsed);
+    // Decode from the redacted body (see onRequest) so masked secrets stay masked.
+    const decoded = decodeResponse(ctx.match, bodyRedaction.body);
     const event: ResponseCompletedEvent = {
       type: "response_completed",
       ...envelope(requestId, ctx),
@@ -321,7 +342,7 @@ function finishNonStream(
     };
     emit(event);
   } else {
-    const errObj = asObject(asObject(parsed).error);
+    const errObj = asObject(asObject(bodyRedaction.body).error);
     const event: ErrorEvent = {
       type: "error",
       ...envelope(requestId, ctx),

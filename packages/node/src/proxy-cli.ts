@@ -15,10 +15,15 @@ const proxy = await startProxy(await ensureCA(), PROXY_PORT);
 
 const ca = CA_CERT_PATH;
 const proxyUrl = `http://127.0.0.1:${proxy.port}`;
+// Absolute file: URL to this package's entry, so `--import` resolves from ANY
+// working directory. `--import llmpeek` resolved relative to the CWD and crashed
+// every node/npm/npx run in shells where llmpeek isn't locally installed.
+const selfImport = new URL("./index.js", import.meta.url).href;
 
 // Write a ready-to-source env file so capturing another process is one command
 // (`source .llmpeek/env.sh`) instead of pasting a wall of exports.
-const envFile = join(process.cwd(), ".llmpeek", "env.sh");
+const dir = join(process.cwd(), ".llmpeek");
+const envFile = join(dir, "env.sh");
 const envBody = `# LLMPeek: capture LLM API calls made from this shell.
 # Usage:  source .llmpeek/env.sh    (then run your program in the SAME shell)
 export HTTPS_PROXY=${proxyUrl}
@@ -27,11 +32,12 @@ export SSL_CERT_FILE=${ca}
 export REQUESTS_CA_BUNDLE=${ca}
 export CURL_CA_BUNDLE=${ca}
 export NODE_EXTRA_CA_CERTS=${ca}
-export NODE_OPTIONS="--import llmpeek"
+export NODE_OPTIONS="--import ${selfImport}"
 `;
 try {
-  mkdirSync(join(process.cwd(), ".llmpeek"), { recursive: true });
-  writeFileSync(envFile, envBody);
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  // The env file points at the CA and is per-user; keep it owner-only.
+  writeFileSync(envFile, envBody, { mode: 0o600 });
 } catch {
   // best-effort: fall back to the printed exports below
 }
